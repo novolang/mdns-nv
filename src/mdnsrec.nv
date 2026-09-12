@@ -1,0 +1,177 @@
+// mdnsrec.nv — dns-codec-nv's records, read the way mDNS means them.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT.
+//
+// THE CLASS FIELD IS NOT A CLASS.  RFC 6762 § 10.2 takes the top bit of
+// the sixteen-bit class for "flush the cache for this name and type",
+// and § 5.4 takes the same bit in a QUESTION for "answer me by
+// unicast".  dns-codec-nv reads what it is given, so an mDNS answer's
+// class arrives as `DnsClassOther(32769)` rather than `DnsClassIn` —
+// and a responder that compared `DnsClassIn` matches nothing, on a
+// network where everything looks fine.
+//
+// So `class_of` and `cache_flush_of` are the pair that splits the bit
+// off an answer, `qclass_of` and `unicast_wanted` are the pair for a
+// question, and NOTHING IN THIS PACKAGE COMPARES A CLASS AS AN INTEGER.
+// The two meanings get two named functions rather than one, because
+// collapsing them is how a responder answers a multicast question by
+// unicast and leaves every other device on the link without the
+// answer it was about to overhear.
+//
+// A GOODBYE IS A TTL OF ZERO AND NOT AN ABSENCE.  A responder leaving
+// the link multicasts its records with `ttl = 0`, which tells every
+// cache to drop them in one second rather than in seventy-five
+// minutes.  `is_goodbye` is that check, and a querier that treated a
+// zero TTL as "cache for zero seconds" and then re-queried is doing
+// the right thing for the wrong reason.
+
+// The class of an answer, with the cache-flush bit removed.
+//
+// ```novo
+// use mdnsrec
+//
+// fn plain(r: DnsRecord) -> DnsClass
+//     mdnsrec.class_of(r)
+// ```
+pub fn class_of(r: DnsRecord) -> DnsClass []
+    todo("mdns-nv.mdnsrec.class_of")
+
+// Whether an answer says to flush the cache for its name and type.
+//
+// A responder that has just claimed a name sets this on its
+// announcements, so every cache on the link replaces whatever it had
+// rather than holding both.
+pub fn cache_flush_of(r: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsrec.cache_flush_of")
+
+// The same record with the cache-flush bit set.
+pub fn with_cache_flush(r: DnsRecord) -> DnsRecord []
+    todo("mdns-nv.mdnsrec.with_cache_flush")
+
+// The class of a question, with the unicast-response bit removed.
+pub fn qclass_of(q: DnsQuestion) -> DnsClass []
+    todo("mdns-nv.mdnsrec.qclass_of")
+
+// Whether a question asks to be answered by unicast.
+//
+// The QU bit.  A responder honours it for the first response after it
+// starts up and for a legacy query from a port that is not 5353, and
+// otherwise answers by multicast so the rest of the link hears.
+pub fn unicast_wanted(q: DnsQuestion) -> Bool []
+    todo("mdns-nv.mdnsrec.unicast_wanted")
+
+// The same question with the unicast-response bit set.
+pub fn with_unicast_wanted(q: DnsQuestion) -> DnsQuestion []
+    todo("mdns-nv.mdnsrec.with_unicast_wanted")
+
+// Whether a record is a goodbye: a TTL of zero.
+//
+// ```novo
+// use mdnsrec
+//
+// fn leaving(r: DnsRecord) -> Bool
+//     mdnsrec.is_goodbye(r)
+// ```
+pub fn is_goodbye(r: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsrec.is_goodbye")
+
+// The same record as a goodbye.
+//
+// What a responder multicasts on the way out, twice, a second apart.
+// A responder that just stopped leaves a printer in every list on the
+// link for seventy-five minutes.
+pub fn as_goodbye(r: DnsRecord) -> DnsRecord []
+    todo("mdns-nv.mdnsrec.as_goodbye")
+
+// Whether a legacy query is one: a source port that is not 5353.
+//
+// A legacy query comes from a normal resolver stub rather than an mDNS
+// responder, and it gets a different answer: unicast, with the
+// question echoed back, with the cache-flush bit cleared and with the
+// TTL capped at ten seconds — because the thing that asked has no way
+// to be told the answer changed.
+pub fn is_legacy_query(source_port: Int) -> Bool []
+    todo("mdns-nv.mdnsrec.is_legacy_query")
+
+// A record prepared for a legacy querier.
+//
+// The cache-flush bit cleared and the TTL capped at ten seconds.
+pub fn for_legacy(r: DnsRecord) -> DnsRecord []
+    todo("mdns-nv.mdnsrec.for_legacy")
+
+// A message with the header an mDNS query carries.
+//
+// ID zero, QR clear, and — the part that catches people — the QUESTION
+// COUNT MAY BE MORE THAN ONE and the ANSWER COUNT of a query is not
+// zero: a query carries its known answers in the answer section.  A
+// responder that refused a query with answers in it refuses every
+// well-behaved querier on the link.
+pub fn query_message(questions: [DnsQuestion], known: [DnsRecord]) -> DnsMessage []
+    todo("mdns-nv.mdnsrec.query_message")
+
+// A message with the header an mDNS response carries.
+//
+// QR set, AA set, ID zero, and NO QUESTIONS: a multicast response
+// echoes nothing, because the question was heard by everybody.  The
+// exception is a legacy query, and `legacy_response` is that one.
+pub fn response_message(answers: [DnsRecord], additionals: [DnsRecord]) -> DnsMessage []
+    todo("mdns-nv.mdnsrec.response_message")
+
+// A response to a legacy querier, with the question echoed and the ID
+// copied.
+pub fn legacy_response(query: DnsMessage, answers: [DnsRecord]) -> DnsMessage []
+    todo("mdns-nv.mdnsrec.legacy_response")
+
+// A probe message: the question, with the records being claimed in the
+// AUTHORITY section.
+//
+// The authority section is what makes a probe a probe.  Two hosts
+// probing for the same name at the same time both see the other's
+// proposed records and compare them, which is how the tie is broken
+// without a round trip — `mdnsclaim.wins_tiebreak` is that comparison.
+pub fn probe_message(name: DnsName, proposed: [DnsRecord]) -> DnsMessage []
+    todo("mdns-nv.mdnsrec.probe_message")
+
+// Whether a message is a probe.
+pub fn is_probe(m: DnsMessage) -> Bool []
+    todo("mdns-nv.mdnsrec.is_probe")
+
+// Whether a message is a response.
+pub fn is_response(m: DnsMessage) -> Bool []
+    todo("mdns-nv.mdnsrec.is_response")
+
+// Whether the truncated bit is set.
+//
+// In mDNS this does NOT mean "retry over TCP" — there is no TCP.  It
+// means "more known answers follow in another packet within 500
+// milliseconds", and a responder that answered before they arrived has
+// sent an answer the querier already had.
+pub fn has_more_known_answers(m: DnsMessage) -> Bool []
+    todo("mdns-nv.mdnsrec.has_more_known_answers")
+
+// Whether two records are the same record for cache purposes.
+//
+// Name, type and class — not TTL and not the rdata.  A record that
+// matches on those three REPLACES the cached one, which is why a
+// responder changing its port does not leave two SRV records behind.
+pub fn same_key(a: DnsRecord, b: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsrec.same_key")
+
+// Whether two records are identical, rdata included.
+pub fn same_record(a: DnsRecord, b: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsrec.same_record")
+
+// The rdata of a record as its canonical wire bytes, for comparison.
+//
+// What the tiebreak compares, and the reason it is published: the
+// comparison is lexicographic over uncompressed wire bytes, and a
+// caller that compared the decoded values instead gets a different
+// answer for two names that differ only in case.
+pub fn canonical_rdata(r: DnsRecord) -> [u8] []
+    todo("mdns-nv.mdnsrec.canonical_rdata")
+
+// A record's default lifetime, from its type.
+pub fn default_ttl(r: DnsRecord) -> Int []
+    todo("mdns-nv.mdnsrec.default_ttl")

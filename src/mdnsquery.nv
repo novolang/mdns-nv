@@ -1,0 +1,187 @@
+// mdnsquery.nv — the querier: a cache with a lifetime, and the rule
+// that keeps a continuous browse from being a flood.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT, AND THE CLOCK IS AN ARGUMENT.  Same shape as
+// `mdnsclaim`: nothing here waits, and every function that cares what
+// time it is takes `now_ms`.  A cache expiring, a refresh firing and a
+// backoff doubling are then all testable in one pass with no sleeping.
+//
+// KNOWN-ANSWER SUPPRESSION IS WHY A BROWSE IS QUIET.  A continuous
+// query carries, in its ANSWER section, the answers the querier already
+// holds — so a responder that sees its own record in the list stays
+// silent.  Without it, a laptop browsing for printers makes every
+// printer on the link answer every second forever.
+//
+// AND THE HALF-LIFE RULE IS WHAT KEEPS IT FROM STARVING THE CACHE.  An
+// answer may only be included while more than half its lifetime
+// remains: an entry the querier is about to have to refresh anyway
+// would otherwise suppress the very response that would have refreshed
+// it, and the entry then expires out of a cache that was asking about
+// it the whole time.  `mdnstime.may_suppress` is that rule and
+// `known_answers` is where it is applied.
+
+use mdnsrec
+use mdnstime
+
+// One record in the cache, with when it arrived.
+pub struct MdnsEntry
+    record: DnsRecord
+    // The caller's own milliseconds when the record was received.
+    received_ms: Int
+    // The lifetime the record carried, in seconds.
+    ttl_seconds: Int
+    // How many of the four refreshes have been sent.
+    refreshes_sent: Int
+
+// A cache of records heard on the link.
+pub struct MdnsCache
+    entries: [MdnsEntry]
+    // The most entries to hold.  A ceiling and not a suggestion: a
+    // cache with no bound is a denial of service anybody on the link
+    // can perform by multicasting records.
+    capacity: Int
+
+// A continuous query for one name and type.
+pub struct MdnsBrowse
+    question: DnsQuestion
+    // When the next query goes out, in the caller's milliseconds.
+    next_at_ms: Int
+    // The current interval, which doubles to an hour.
+    interval_ms: Int
+
+// What a fed message changed.
+//
+// A LIST OF CHANGES AND NOT A NEW CACHE ALONE, because what a caller
+// does with a browse is react to the deltas: a printer appeared, a
+// printer's port changed, a printer went away.  A caller handed only
+// the new cache has to diff it against the old one to find that out,
+// and a diff over records is exactly the comparison `mdnsrec.same_key`
+// exists to make correctly.
+pub enum MdnsChange
+    // A record for a name and type that was not cached.
+    MdnsChangeAdded(record: DnsRecord)
+    // A record that replaced one with the same name, type and class.
+    MdnsChangeUpdated(record: DnsRecord)
+    // A goodbye, or an entry whose lifetime ran out.
+    MdnsChangeRemoved(record: DnsRecord)
+
+// A cache with room for `capacity` records.
+//
+// ```novo
+// use mdnsquery
+//
+// fn c() -> MdnsCache
+//     mdnsquery.cache(512)
+// ```
+pub fn cache(capacity: Int) -> MdnsCache []
+    todo("mdns-nv.mdnsquery.cache")
+
+// Feed a response into the cache.
+//
+// Answers the new cache.  `changes_of` is the companion that says what
+// moved; the two are separate calls so a caller that does not need the
+// deltas does not pay for building them.
+pub fn feed(c: MdnsCache, m: DnsMessage, now_ms: Int) -> MdnsCache []
+    todo("mdns-nv.mdnsquery.feed")
+
+// What feeding that message would change.
+pub fn changes_of(c: MdnsCache, m: DnsMessage, now_ms: Int) -> [MdnsChange] []
+    todo("mdns-nv.mdnsquery.changes_of")
+
+// Drop every entry whose lifetime has run out.
+//
+// Called by the caller's timer, because a cache that expired entries
+// lazily reports a printer as present right up until somebody asks.
+pub fn expire(c: MdnsCache, now_ms: Int) -> MdnsCache []
+    todo("mdns-nv.mdnsquery.expire")
+
+// Every entry for a name and type.
+pub fn lookup(c: MdnsCache, name: DnsName, kind: DnsType) -> [MdnsEntry] []
+    todo("mdns-nv.mdnsquery.lookup")
+
+// Every entry, for a caller building its own view.
+pub fn entries_of(c: MdnsCache) -> [MdnsEntry] []
+    todo("mdns-nv.mdnsquery.entries_of")
+
+// How many entries the cache holds.
+pub fn entry_count(c: MdnsCache) -> Int []
+    todo("mdns-nv.mdnsquery.entry_count")
+
+// The entries that are due a refresh at `now_ms`.
+//
+// Four refreshes per record, at 80, 85, 90 and 95 per cent of its
+// lifetime.  Four and not one, because a single refresh that is lost
+// leaves the record to expire — and an entry that expires out of a
+// cache is a printer that vanishes from a list while it is still
+// plugged in.
+pub fn due_for_refresh(c: MdnsCache, now_ms: Int, jitter_percent: Int) -> [MdnsEntry] []
+    todo("mdns-nv.mdnsquery.due_for_refresh")
+
+// Record that a refresh was sent for an entry.
+pub fn refresh_sent(c: MdnsCache, e: MdnsEntry) -> MdnsCache []
+    todo("mdns-nv.mdnsquery.refresh_sent")
+
+// A continuous query for a name and type.
+//
+// The first query goes out immediately; the interval starts at one
+// second and doubles to an hour.
+pub fn browse(name: DnsName, kind: DnsType, now_ms: Int) -> MdnsBrowse []
+    todo("mdns-nv.mdnsquery.browse")
+
+// Whether a browse is due at `now_ms`.
+pub fn browse_due(b: MdnsBrowse, now_ms: Int) -> Bool []
+    todo("mdns-nv.mdnsquery.browse_due")
+
+// The message a browse sends, with its known answers attached.
+//
+// ```novo
+// use mdnsquery
+//
+// fn q(b: MdnsBrowse, c: MdnsCache, now: Int) -> DnsMessage
+//     mdnsquery.browse_message(b, c, now)
+// ```
+pub fn browse_message(b: MdnsBrowse, c: MdnsCache, now_ms: Int) -> DnsMessage []
+    todo("mdns-nv.mdnsquery.browse_message")
+
+// Record that a browse's query was sent, doubling the interval.
+pub fn browse_sent(b: MdnsBrowse, now_ms: Int) -> MdnsBrowse []
+    todo("mdns-nv.mdnsquery.browse_sent")
+
+// The known answers a query may carry for a question.
+//
+// Every cached record matching the question WHOSE REMAINING LIFETIME IS
+// MORE THAN HALF of what it started with, with its TTL rewritten to
+// what is left — see the module comment for why the half is not
+// optional, and `mdnsrec.query_message` for the fact that a query with
+// answers in it is a normal query and not a malformed one.
+pub fn known_answers(c: MdnsCache, q: DnsQuestion, now_ms: Int) -> [DnsRecord] []
+    todo("mdns-nv.mdnsquery.known_answers")
+
+// Whether a query's known answers already cover this record.
+//
+// The responder's half of the rule, published here beside the
+// querier's so the two cannot drift: an answer is suppressed when the
+// query carries the same record with a remaining lifetime at least half
+// of what this responder would send.  "At least half" and not "equal",
+// because the querier's copy is always a little older.
+pub fn is_known(query: DnsMessage, r: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsquery.is_known")
+
+// The instances a cache has seen for a service.
+//
+// The one convenience over `lookup` this module has, because reading a
+// browse result means joining PTR to SRV to TXT to A by name, which is
+// four lookups and a join every caller would otherwise write.
+pub fn instances_of(c: MdnsCache, service: DnsName) -> [DnsName] []
+    todo("mdns-nv.mdnsquery.instances_of")
+
+// Whether a response should be accepted at all.
+//
+// A response's source must be on the local link and its IP TTL must be
+// 255 — RFC 6762 § 11.  The TTL is an argument because it is the
+// socket's to read and this module has none; `mdnssock` supplies it and
+// `MdnsFaultNotLinkLocal` is what a caller reports.
+pub fn accept_response(ip_ttl: Int, from_link_local: Bool) -> ?MdnsFault []
+    todo("mdns-nv.mdnsquery.accept_response")

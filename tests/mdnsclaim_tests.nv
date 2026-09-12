@@ -1,0 +1,269 @@
+// mdnsclaim_tests.nv — the timing rules, the two stolen class bits,
+// and the probe-announce-conflict-rename sequence.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: mdns-nv.<module>.<fn>`.
+//
+// NOT ONE OF THESE TESTS SLEEPS.  Every state machine in this package
+// takes `now_ms` as an argument, so a complete claim — three probes
+// 250 milliseconds apart, a conflict, a rename, three more probes and
+// two announcements — is a sequence of calls with numbers in them and
+// it runs in microseconds.  That is the property the design exists for
+// and this file is where it is checked.
+
+use std.test
+use mdnsclaim
+use mdnsfault
+use mdnsrec
+use mdnssd
+use mdnstime
+use dns_codec
+
+fn a_name(text: Str) -> DnsName
+    match dns_codec.name_from_text(text)
+        Ok(n)  => n
+        Err(_) => dns_codec.root_name()
+
+fn an_address_record(text: Str) -> DnsRecord
+    DnsRecord { name: a_name(text), record_class: DnsClassInternet, ttl: 120,
+                data: RdataA([192, 168, 1, 47]) }
+
+@test
+fn test_the_class_field_is_not_a_class() [io]
+    // RFC 6762 § 10.2 takes the top bit of the sixteen-bit class for
+    // "flush the cache", and § 5.4 takes the same bit in a question for
+    // "answer me by unicast".  dns-codec-nv reads what it is given, so
+    // an mDNS answer's class arrives as `DnsClassOther(32769)` — and a
+    // responder that compared `DnsClassInternet` matches nothing, on a
+    // network where everything looks fine.
+    test.case("the class with the bit removed is IN")
+    test.assert_eq(mdnstime.class_bits(0x8001), 1)
+
+    test.case("and the bit is what it is")
+    test.assert(mdnstime.has_class_bit(0x8001))
+    test.assert(not mdnstime.has_class_bit(0x0001))
+
+    test.case("a record carries the bit as a flag, not as a class")
+    test.assert(not mdnsrec.cache_flush_of(an_address_record("printer.local")))
+
+@test
+fn test_the_same_bit_means_two_things_and_gets_two_functions() [io]
+    // Collapsing them is how a responder answers a multicast question
+    // by unicast and leaves every other device on the link without the
+    // answer it was about to overhear.
+    let q = DnsQuestion { name: a_name("printer.local"),
+                          question_type: DnsTypeA, question_class: DnsClassInternet }
+
+    test.case("a plain question wants a multicast answer")
+    test.assert(not mdnsrec.unicast_wanted(q))
+
+    test.case("and one with the bit set wants a unicast one")
+    test.assert(mdnsrec.unicast_wanted(mdnsrec.with_unicast_wanted(q)))
+
+    test.case("while the same bit on an ANSWER means flush the cache")
+    test.assert(mdnsrec.cache_flush_of(
+        mdnsrec.with_cache_flush(an_address_record("printer.local"))))
+
+@test
+fn test_a_goodbye_is_a_ttl_of_zero_and_not_an_absence() [io]
+    // A responder that just stopped leaves a printer in every list on
+    // the link for seventy-five minutes.
+    let r = an_address_record("printer.local")
+
+    test.case("an ordinary record is not a goodbye")
+    test.assert(not mdnsrec.is_goodbye(r))
+
+    test.case("and the goodbye is the same record at zero")
+    test.assert(mdnsrec.is_goodbye(mdnsrec.as_goodbye(r)))
+
+@test
+fn test_the_probe_schedule_is_three_probes_a_quarter_second_apart() [io]
+    // A responder that announced without probing takes a name somebody
+    // else is already answering for, and the two of them then answer the
+    // same question differently forever — which presents as a printer
+    // that works from one laptop and not from another, with nothing in
+    // any log.
+    test.case("three probes")
+    test.assert_eq(mdnstime.MDNS_PROBE_COUNT, 3)
+
+    test.case("the first after the caller's jitter")
+    test.assert_eq(mdnstime.probe_at_ms(1000, 100, 0), 1100)
+
+    test.case("and the rest 250 milliseconds apart")
+    test.assert_eq(mdnstime.probe_at_ms(1000, 100, 1), 1350)
+    test.assert_eq(mdnstime.probe_at_ms(1000, 100, 2), 1600)
+
+@test
+fn test_a_probe_carries_its_records_in_the_authority_section() [io]
+    // That is what makes a probe a probe rather than a query: two hosts
+    // probing at once each see the other's proposed records, and the
+    // tie is broken without a round trip.
+    let m = mdnsrec.probe_message(a_name("printer.local"),
+                                  [an_address_record("printer.local")])
+
+    test.case("a probe is not a response")
+    test.assert(not mdnsrec.is_response(m))
+
+    test.case("and it is recognisable as a probe")
+    test.assert(mdnsrec.is_probe(m))
+
+@test
+fn test_the_tie_is_broken_lexicographically_and_not_by_who_asked_first() [io]
+    // A responder that deferred to whoever it heard from first does not
+    // converge, because both of them heard the other first.
+    let low = [an_address_record("printer.local")]
+    let high = [DnsRecord { name: a_name("printer.local"), record_class: DnsClassInternet,
+                            ttl: 120, data: RdataA([192, 168, 1, 200]) }]
+
+    test.case("the numerically greater rdata wins")
+    test.assert(mdnsclaim.wins_tiebreak(high, low))
+
+    test.case("and the comparison is the same answer on both hosts")
+    test.assert(not mdnsclaim.wins_tiebreak(low, high))
+
+@test
+fn test_a_claim_says_when_and_never_sleeps() [io]
+    // `MdnsClaimWait` is the variant that makes this design work: every
+    // rule in mDNS is "do this at time T", and a state machine that
+    // said only "send this" would need a sleep a test cannot skip and a
+    // device's event loop cannot schedule around.
+    let c = mdnsclaim.claim(a_name("printer.local"),
+                            [an_address_record("printer.local")], 1000, 100)
+
+    test.case("a fresh claim is not held")
+    test.assert(not mdnsclaim.is_held(c))
+
+    test.case("and polling before the first probe says when to come back")
+    match mdnsclaim.poll(c, 1000)
+        MdnsClaimWait(at)    => test.assert(at >= 1000)
+        MdnsClaimSend(_, at) => test.assert(at >= 1000)
+        _                    => test.fail("a fresh claim is either waiting or sending")
+
+@test
+fn test_the_whole_claim_surface_is_callable_from_outside() [io]
+    // Every remaining function in the state machine, named the way a
+    // consumer would spell it.  The first `todo()` ends the run; what
+    // this checks before that is that the signatures are usable from
+    // outside the package at all.
+    let c = mdnsclaim.claim(a_name("printer.local"),
+                            [an_address_record("printer.local")], 1000, 100)
+    let m = mdnsrec.response_message([an_address_record("printer.local")], [])
+
+    test.case("the pump's companions")
+    let _s = mdnsclaim.sent_at(c, 1100)
+    let _w = mdnsclaim.saw_message(c, m, 1200)
+    let _l = mdnsclaim.leave(c, 5000)
+    let _r = mdnsclaim.rename(c, a_name("printer-2.local"),
+                              [an_address_record("printer-2.local")], 2000, 40)
+
+    test.case("what a caller reads off a claim")
+    let _cw = mdnsclaim.conflicts_with(c, m)
+    let _st = mdnsclaim.state_of(c)
+    let _co = mdnsclaim.conflicts_of(c)
+    let _rs = mdnsclaim.records_of(c)
+
+    test.case("and the three messages it builds")
+    let _pm = mdnsclaim.probe_message_of(c)
+    let _am = mdnsclaim.announcement_of(c)
+    let _gm = mdnsclaim.goodbye_of(c)
+    test.assert(true)
+
+@test
+fn test_the_remaining_timing_rules_are_named() [io]
+    // The three `mdnstime` functions the behavioural tests above do not
+    // reach, each with the number that makes it worth having.
+    test.case("a class with the bit set is the class plus the bit")
+    test.assert_eq(mdnstime.with_class_bit(1), 0x8001)
+
+    test.case("the first announcement is immediate and the second a second later")
+    test.assert_eq(mdnstime.announce_at_ms(2000, 0), 2000)
+    test.assert_eq(mdnstime.announce_at_ms(2000, 1), 3000)
+
+    test.case("an address lives for two minutes and a PTR for seventy-five")
+    test.assert_eq(mdnstime.default_ttl_for(1), mdnstime.MDNS_TTL_HOST)
+    test.assert_eq(mdnstime.default_ttl_for(12), mdnstime.MDNS_TTL_OTHER)
+
+@test
+fn test_fifteen_renames_is_the_link_saying_no() [io]
+    // Something on the link is not yielding, and continuing to rename
+    // fifteen times a second makes it worse for everybody.
+    test.case("the ceiling is named")
+    test.assert_eq(mdnstime.MDNS_MAX_CONFLICTS, 15)
+
+    test.case("past it the backoff is five seconds")
+    test.assert(mdnstime.conflict_backoff_ms(16) >= 5000)
+
+    test.case("and the fault says a rename would not help")
+    test.assert(not mdnsfault.rename_would_help(MdnsFaultTooManyConflicts(15)))
+
+@test
+fn test_a_rename_produces_a_name_a_user_recognises() [io]
+    // A responder that appended a random suffix produces a name a user
+    // cannot recognise as theirs.
+    match mdnssd.service("ipp", "tcp")
+        Err(_) => test.fail("_ipp._tcp is a legal service type")
+        Ok(s)  =>
+            match mdnssd.instance("Klaus's Printer", s, "local")
+                Err(_) => test.fail("an instance name is one label of anything")
+                Ok(i)  =>
+                    test.case("the second attempt is the name with (2) after it")
+                    test.assert_eq_str(mdnssd.renamed(i, 2).instance,
+                                       "Klaus's Printer (2)")
+
+    test.case("and a hostname renames with a hyphen instead")
+    test.assert_eq_str(mdnssd.renamed_host("printer", 2), "printer-2")
+
+@test
+fn test_an_instance_name_is_human_readable_and_not_escaped() [io]
+    // The commonest mistake is escaping it — a caller that turned the
+    // space into `\032` produces a name that appears in every browser
+    // with the escape in it, forever, because the name is what it is
+    // advertised as.
+    match mdnssd.service("ipp", "tcp")
+        Err(_) => test.fail("_ipp._tcp is a legal service type")
+        Ok(s)  =>
+            test.case("spaces, apostrophes and parentheses are all legal")
+            match mdnssd.instance("Klaus's Printer (upstairs)", s, "local")
+                Ok(i)  => test.assert_eq_str(i.instance, "Klaus's Printer (upstairs)")
+                Err(_) => test.fail("an instance name is one label of anything")
+
+@test
+fn test_a_service_type_is_two_labels_and_the_protocol_is_one_of_two() [io]
+    test.case("tcp is legal")
+    match mdnssd.service("ipp", "tcp")
+        Ok(_)  => test.assert(true)
+        Err(_) => test.fail("_ipp._tcp is a legal service type")
+
+    test.case("and anything else is refused rather than passed through")
+    match mdnssd.service("ipp", "sctp")
+        Ok(_)  => test.fail("only tcp and udp are legal")
+        Err(_) => test.assert(true)
+
+    test.case("the text form round-trips")
+    match mdnssd.service_of_text("_ipp._tcp")
+        Ok(s)  => test.assert_eq_str(mdnssd.service_text(s), "_ipp._tcp")
+        Err(_) => test.fail("_ipp._tcp is a legal service type")
+
+@test
+fn test_a_txt_key_with_no_value_is_not_a_key_with_an_empty_value() [io]
+    // `key` alone means "present, no value"; `key=` means "present,
+    // empty value".  A reader that collapsed them cannot implement a
+    // flag that some services set to the empty string on purpose.
+    let flag = mdnssd.txt_flag("paperless")
+    let empty = mdnssd.txt_pair("paperless", "")
+
+    test.case("a flag has no value")
+    test.assert(not flag.has_value)
+
+    test.case("and an empty value is a value")
+    test.assert(empty.has_value)
+
+@test
+fn test_a_txt_key_is_matched_without_regard_to_case() [io]
+    // The specification's rule, and the one most readers get wrong.
+    let pairs = [mdnssd.txt_pair("rp", "printers/one")]
+
+    test.case("the key matches in the other case")
+    match mdnssd.txt_get(pairs, "RP")
+        Some(p) => test.assert_eq_str(p.value, "printers/one")
+        None    => test.fail("TXT keys are case-insensitive")

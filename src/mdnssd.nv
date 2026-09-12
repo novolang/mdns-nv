@@ -1,0 +1,250 @@
+// mdnssd.nv — RFC 6763: what a service is called, and the four records
+// that describe one.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT.
+//
+// AN INSTANCE NAME IS A HUMAN-READABLE STRING AND NOT A HOSTNAME.
+// "Klaus's Printer (upstairs)" is a legal DNS-SD instance name, apostrophe
+// and spaces and parentheses and all, because it is one DNS LABEL and a
+// label is 63 bytes of anything.  The commonest mistake is escaping it —
+// a caller that turned the space into `\032` or a dash produces a name
+// that appears in every browser with the escape in it, forever, because
+// the name is what it is advertised as.
+//
+// So `MdnsInstance` keeps the three parts SEPARATE — instance, service
+// type, domain — and `full_name` is the one place they are joined.
+// Parsing back is `instance_of`, and it is a different function from
+// splitting a hostname because the first label of a service instance
+// may contain a dot and the first label of a hostname may not.
+//
+// A SERVICE IS FOUR RECORDS AND NOT ONE.  PTR says the type has this
+// instance; SRV says the instance is at this host and port; TXT says
+// what else the client needs to know; A or AAAA says where the host is.
+// A responder that answered the PTR and left the rest to a second
+// round trip works, slowly, and a responder that put all four in one
+// packet is what makes discovery feel instant — which is why
+// `records_for` returns the set and `additionals_for` says which of
+// them ride along unasked.
+
+// The `.local` domain every mDNS name is under.
+pub const MDNS_DOMAIN = "local"
+
+// The meta-query that lists the service TYPES on a link, rather than
+// the instances of one: `_services._dns-sd._udp.local`.
+//
+// Published as a constant because it is the one name in DNS-SD that is
+// not derived from anything, and because a browser that did not know it
+// cannot show a user what is out there.
+pub const MDNS_SERVICE_ENUM = "_services._dns-sd._udp.local"
+
+// The longest a TXT key may be: nine characters.
+//
+// RFC 6763 § 6.4's recommendation, and it is a recommendation with a
+// reason — the whole record has to fit beside three others in one
+// packet.
+pub const MDNS_TXT_KEY_MAX = 9
+
+// The size a whole TXT record should stay under, in bytes: 1300.
+//
+// So that a response carrying PTR, SRV, TXT and A fits in one
+// datagram on a link with a 1500-byte MTU.  Above it the response
+// fragments, and a fragmented mDNS response is one several
+// implementations drop.
+pub const MDNS_TXT_SOFT_MAX = 1300
+
+// One service type: `_ipp._tcp`, `_http._tcp`, and the optional
+// subtypes a browser can filter on.
+pub struct MdnsService
+    // Without the underscore: `ipp`, `http`.  At most fifteen
+    // characters, letters digits and hyphens.
+    name: Str
+    // `tcp` or `udp`.  A third value is not legal and
+    // `service_of_text` refuses it rather than passing it through.
+    proto: Str
+    // Subtypes, without underscores.  A printer advertising
+    // `_universal._sub._ipp._tcp` is one `_ipp._tcp` instance that a
+    // browser filtering on `_universal` will find.
+    subtypes: [Str]
+
+// One advertised instance of a service.
+pub struct MdnsInstance
+    // The human-readable name, unescaped, as the user typed it.
+    instance: Str
+    service: MdnsService
+    // Usually `local`.
+    domain: Str
+
+// Where an instance actually is.
+pub struct MdnsTarget
+    // A single label under `.local`, without the domain.
+    hostname: Str
+    port: Int
+    priority: Int
+    weight: Int
+
+// One key and value from a TXT record.
+//
+// `value` EMPTY and `has_value` false are two different things, and the
+// difference is in the specification: `key` alone means "present, no
+// value", `key=` means "present, empty value", and a reader that
+// collapsed them cannot implement a flag that some services set to the
+// empty string on purpose.
+pub struct MdnsTxtPair
+    key: Str
+    value: Str
+    has_value: Bool
+
+// A service type from its text: `_ipp._tcp`.
+//
+// ```novo
+// use mdnsfault
+// use mdnssd
+//
+// fn svc(t: Str) -> Result<MdnsService, MdnsFault>
+//     mdnssd.service_of_text(t)
+// ```
+pub fn service_of_text(text: Str) -> Result<MdnsService, MdnsFault> []
+    todo("mdns-nv.mdnssd.service_of_text")
+
+// A service type from its two parts.
+pub fn service(name: Str, proto: Str) -> Result<MdnsService, MdnsFault> []
+    todo("mdns-nv.mdnssd.service")
+
+// The same service with one more subtype.
+pub fn with_subtype(s: MdnsService, subtype: Str) -> Result<MdnsService, MdnsFault> []
+    todo("mdns-nv.mdnssd.with_subtype")
+
+// A service type as text, without the domain.
+pub fn service_text(s: MdnsService) -> Str []
+    todo("mdns-nv.mdnssd.service_text")
+
+// The name a browser sends a PTR query for: `_ipp._tcp.local`.
+pub fn service_name(s: MdnsService, domain: Str) -> Result<DnsName, MdnsFault> []
+    todo("mdns-nv.mdnssd.service_name")
+
+// The name a subtype browse sends: `_universal._sub._ipp._tcp.local`.
+pub fn subtype_name(s: MdnsService, subtype: Str, domain: Str) -> Result<DnsName, MdnsFault> []
+    todo("mdns-nv.mdnssd.subtype_name")
+
+// An instance from its three parts.
+//
+// The instance name is NOT escaped and NOT validated beyond its length
+// in bytes: see the module comment.
+pub fn instance(name: Str, s: MdnsService, domain: Str) -> Result<MdnsInstance, MdnsFault> []
+    todo("mdns-nv.mdnssd.instance")
+
+// The wire name of an instance.
+//
+// The one place the three parts are joined, and the only place the
+// escaping rule lives.
+pub fn full_name(i: MdnsInstance) -> Result<DnsName, MdnsFault> []
+    todo("mdns-nv.mdnssd.full_name")
+
+// An instance from a wire name a PTR record pointed at.
+//
+// The inverse of `full_name`, and a different function from splitting a
+// hostname: the first label of a service instance may contain a dot and
+// the first label of a hostname may not.
+pub fn instance_of(name: DnsName) -> Result<MdnsInstance, MdnsFault> []
+    todo("mdns-nv.mdnssd.instance_of")
+
+// A hostname's wire name: `printer.local`.
+pub fn host_name(hostname: Str, domain: Str) -> Result<DnsName, MdnsFault> []
+    todo("mdns-nv.mdnssd.host_name")
+
+// A TXT record's pairs.
+//
+// Each string in the record is one pair.  A string with no `=` is a key
+// with no value; the FIRST occurrence of a duplicate key wins and the
+// rest are dropped, which is the specification's rule and not a
+// convenience — a reader that took the last one disagrees with every
+// other implementation on the link.
+pub fn txt_pairs(r: DnsRecord) -> [MdnsTxtPair] []
+    todo("mdns-nv.mdnssd.txt_pairs")
+
+// One key's value, or nothing.
+//
+// Keys are compared WITHOUT REGARD TO CASE, which is the specification's
+// rule and the one most readers get wrong.
+pub fn txt_get(pairs: [MdnsTxtPair], key: Str) -> ?MdnsTxtPair []
+    todo("mdns-nv.mdnssd.txt_get")
+
+// A TXT record from a list of pairs.
+//
+// Refuses a key that is empty, contains an `=`, or repeats one already
+// in the list.  An EMPTY list becomes a record holding ONE zero-length
+// string and not a record holding nothing, because a TXT record with no
+// strings at all is malformed and the empty one is what a service with
+// no attributes advertises.
+pub fn txt_record(name: DnsName, pairs: [MdnsTxtPair], ttl: Int) -> Result<DnsRecord, MdnsFault> []
+    todo("mdns-nv.mdnssd.txt_record")
+
+// A pair with a key and a value.
+pub fn txt_pair(key: Str, value: Str) -> MdnsTxtPair []
+    todo("mdns-nv.mdnssd.txt_pair")
+
+// A pair with a key and no value at all.
+pub fn txt_flag(key: Str) -> MdnsTxtPair []
+    todo("mdns-nv.mdnssd.txt_flag")
+
+// The four records that describe one instance.
+//
+// PTR, SRV, TXT and one address record, in that order, with the
+// lifetimes RFC 6762 § 10 gives each: 4500 seconds for PTR and TXT,
+// 120 for SRV and the address.  Two lifetimes and not one, because a
+// responder that used the long one for an address leaves a stale answer
+// in every cache on the link for an hour after the machine moved.
+//
+// ```novo
+// use mdnsfault
+// use mdnssd
+//
+// fn rs(i: MdnsInstance, t: MdnsTarget, txt: [MdnsTxtPair], a: [u8]) -> Result<[DnsRecord], MdnsFault>
+//     mdnssd.records_for(i, t, txt, a)
+// ```
+pub fn records_for(i: MdnsInstance, t: MdnsTarget, txt: [MdnsTxtPair],
+                   address: [u8]) -> Result<[DnsRecord], MdnsFault> []
+    todo("mdns-nv.mdnssd.records_for")
+
+// Which of an instance's records ride along unasked.
+//
+// A PTR query is answered with the PTR, and the SRV, TXT and address
+// go in the ADDITIONAL section — so one query and one response are the
+// whole of discovery.  A responder that answered only what was asked
+// works and takes three round trips, which is the difference between a
+// list that appears and a list that fills in.
+pub fn additionals_for(answered: DnsRecord, all: [DnsRecord]) -> [DnsRecord] []
+    todo("mdns-nv.mdnssd.additionals_for")
+
+// The PTR record that puts an instance in the service enumeration.
+//
+// `_services._dns-sd._udp.local` PTR `_ipp._tcp.local`.  A responder
+// that skipped it is invisible to a browser listing what KINDS of
+// service are on the link, which is how a device fails to appear in a
+// tool that shows everything.
+pub fn enumeration_record(s: MdnsService, domain: Str, ttl: Int) -> Result<DnsRecord, MdnsFault> []
+    todo("mdns-nv.mdnssd.enumeration_record")
+
+// The instance name a conflict renames to.
+//
+// `Printer` becomes `Printer (2)`, then `Printer (3)`.  The rule is
+// Apple's and it is the one every browser displays legibly; a
+// responder that appended a random suffix produces a name a user
+// cannot recognise as theirs.
+pub fn renamed(i: MdnsInstance, n: Int) -> MdnsInstance []
+    todo("mdns-nv.mdnssd.renamed")
+
+// The hostname a conflict renames to: `printer-2.local`.
+pub fn renamed_host(hostname: Str, n: Int) -> Str []
+    todo("mdns-nv.mdnssd.renamed_host")
+
+// Whether a name is inside `.local`.
+//
+// The check a resolver makes to decide whether a name goes to mDNS or
+// to a unicast resolver at all.  RFC 6762 § 3 reserves `.local` for
+// exactly this, and a stub that sent `printer.local` to a public
+// resolver leaks the name of a machine on somebody's desk.
+pub fn is_local(name: DnsName) -> Bool []
+    todo("mdns-nv.mdnssd.is_local")

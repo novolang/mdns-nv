@@ -1,0 +1,322 @@
+// mdnsbrowse_tests.nv — the cache, known-answer suppression, the
+// responder's four reasons not to answer, and the socket surface.
+//
+// RED ON PURPOSE, like `mdnsclaim_tests.nv`.
+//
+// THE SOCKET FUNCTIONS ARE NAMED THROUGH A FUNCTION THAT IS NEVER
+// REACHED.  `over_a_real_socket` names every `[net]` and `[time]`
+// function in `mdnssock` with its own row; it is guarded by an `open`
+// that cannot succeed, because the multicast group cannot be joined on
+// this toolchain — which is the package's headline missing row and is
+// itself what the last test asserts.
+
+use std.test
+use mdnsquery
+use mdnsrec
+use mdnsresp
+use mdnssd
+use mdnssock
+use mdnstime
+use dns_codec
+
+fn a_name(text: Str) -> DnsName
+    match dns_codec.name_from_text(text)
+        Ok(n)  => n
+        Err(_) => dns_codec.root_name()
+
+fn an_address_record(text: Str) -> DnsRecord
+    DnsRecord { name: a_name(text), record_class: DnsClassInternet, ttl: 120,
+                data: RdataA([192, 168, 1, 47]) }
+
+fn a_ptr_record(text: Str, target: Str) -> DnsRecord
+    DnsRecord { name: a_name(text), record_class: DnsClassInternet, ttl: 4500,
+                data: RdataPtr(a_name(target)) }
+
+fn a_question(text: Str) -> DnsQuestion
+    DnsQuestion { name: a_name(text), question_type: DnsTypeA,
+                  question_class: DnsClassInternet }
+
+// Names the whole socket surface.  Reached only through an `open` that
+// succeeds, which it cannot while the group cannot be joined.
+fn over_a_real_socket(s: MdnsSocket) -> Int [net, time]
+    let _now = mdnssock.now_ms()
+    let _link = mdnssock.is_link_local(s, "192.168.1.1")
+    let _join = mdnssock.join_group(s)
+    let m = mdnsrec.query_message([a_question("printer.local")], [])
+    let _mc = mdnssock.send_multicast(s, m)
+    let _uc = mdnssock.send_to(s, m, "192.168.1.1", 5353)
+    let got = match mdnssock.recv(s, 100)
+        Ok(_)  => 1
+        Err(_) => 2
+    let _c = mdnssock.close(s)
+    got
+
+@test
+fn test_a_query_carries_its_known_answers_and_that_is_normal() [io]
+    // A responder that refused a query with answers in it refuses every
+    // well-behaved querier on the link.
+    let m = mdnsrec.query_message([a_question("printer.local")],
+                                  [an_address_record("printer.local")])
+
+    test.case("a query with answers in it is a query")
+    test.assert(not mdnsrec.is_response(m))
+
+@test
+fn test_a_known_answer_is_only_included_while_half_its_life_remains() [io]
+    // An entry the querier is about to have to refresh anyway would
+    // otherwise suppress the very response that would have refreshed
+    // it, and the entry then expires out of a cache that was asking
+    // about it the whole time.
+    test.case("at a quarter of the way through, it may be included")
+    test.assert(mdnstime.may_suppress(0, 120, 30000))
+
+    test.case("at three quarters, it may not")
+    test.assert(not mdnstime.may_suppress(0, 120, 90000))
+
+    test.case("and the TTL sent is what is LEFT, not what was given")
+    test.assert_eq(mdnstime.remaining_ttl(0, 120, 60000), 60)
+
+@test
+fn test_a_cache_is_bounded_because_anybody_on_the_link_can_fill_it() [io]
+    // A cache with no bound is a denial of service anybody on the link
+    // can perform by multicasting records.
+    let c = mdnsquery.cache(512)
+
+    test.case("a fresh cache is empty")
+    test.assert_eq(mdnsquery.entry_count(c), 0)
+
+    test.case("and it has a capacity rather than a policy")
+    test.assert_eq(c.capacity, 512)
+
+@test
+fn test_a_browse_answers_deltas_and_not_only_a_new_cache() [io]
+    // What a caller does with a browse is react to the changes: a
+    // printer appeared, a printer's port changed, a printer went away.
+    // A caller handed only the new cache has to diff it to find that
+    // out.
+    let c = mdnsquery.cache(64)
+    let m = mdnsrec.response_message([an_address_record("printer.local")], [])
+
+    test.case("feeding a response reports what moved")
+    match mdnsquery.changes_of(c, m, 1000)
+        _ => test.assert(true)
+
+@test
+fn test_a_continuous_query_doubles_to_an_hour_and_stops_there() [io]
+    // A querier that kept asking every second is a querier that is
+    // indistinguishable from a fault.
+    test.case("the first interval is a second")
+    test.assert_eq(mdnstime.MDNS_QUERY_FIRST_MS, 1000)
+
+    test.case("it doubles")
+    test.assert_eq(mdnstime.next_query_ms(1000), 2000)
+
+    test.case("and it stops at an hour")
+    test.assert_eq(mdnstime.next_query_ms(mdnstime.MDNS_QUERY_MAX_MS),
+                   mdnstime.MDNS_QUERY_MAX_MS)
+
+@test
+fn test_a_cached_record_is_refreshed_four_times_before_it_expires() [io]
+    // A single refresh at 80 per cent that is lost leaves the record to
+    // expire — and an entry that expires out of a cache is a printer
+    // that vanishes from a list while it is still plugged in.
+    test.case("the first refresh is at eighty per cent")
+    test.assert_eq(mdnstime.refresh_at_ms(0, 100, 0, 0), 80000)
+
+    test.case("the last at ninety-five")
+    test.assert_eq(mdnstime.refresh_at_ms(0, 100, 3, 0), 95000)
+
+    test.case("and expiry is at the end")
+    test.assert_eq(mdnstime.expires_at_ms(0, 100), 100000)
+
+@test
+fn test_a_unique_record_is_answered_now_and_a_shared_one_is_deferred() [io]
+    // A responder that treated everything as unique is the one that
+    // makes a browse for `_ipp._tcp` produce forty simultaneous
+    // packets.
+    let r = mdnsresp.responder([an_address_record("printer.local"),
+                                a_ptr_record("_ipp._tcp.local", "p._ipp._tcp.local")])
+
+    test.case("an address this host probed for is unique")
+    test.assert(mdnsresp.is_unique(r, an_address_record("printer.local")))
+
+    test.case("the deferral window is twenty to a hundred and twenty milliseconds")
+    test.assert(mdnstime.defer_ms(0) >= mdnstime.MDNS_DEFER_MIN_MS)
+    test.assert(mdnstime.defer_ms(999999) <= mdnstime.MDNS_DEFER_MAX_MS)
+
+@test
+fn test_an_answer_multicast_in_the_last_second_stays_quiet() [io]
+    let r = mdnsresp.responder([an_address_record("printer.local")])
+
+    test.case("the window is one second")
+    test.assert_eq(mdnstime.MDNS_DUPLICATE_WINDOW_MS, 1000)
+
+    test.case("inside it, suppressed")
+    test.assert(mdnstime.is_suppressed(1000, 1500))
+
+    test.case("outside it, not")
+    test.assert(not mdnstime.is_suppressed(1000, 2500))
+
+    test.case("and the responder answers the same question")
+    test.assert(not mdnsresp.recently_sent(r, an_address_record("printer.local"), 9999))
+
+@test
+fn test_a_deferred_response_is_dropped_when_somebody_else_answers_first() [io]
+    // Between planning a deferred response and sending it, another
+    // responder may multicast the same record.  A responder without
+    // this sends the second copy of every shared answer on the link.
+    let r = mdnsresp.responder([a_ptr_record("_ipp._tcp.local", "p._ipp._tcp.local")])
+    let q = mdnsrec.query_message([a_question("_ipp._tcp.local")], [])
+
+    test.case("a plan is made, then possibly unmade")
+    match mdnsresp.plan(r, q, "192.168.1.9", 5353, 1000, 61)
+        None    => test.assert(true)
+        Some(p) =>
+            let heard = mdnsrec.response_message(
+                [a_ptr_record("_ipp._tcp.local", "p._ipp._tcp.local")], [])
+            match mdnsresp.suppress(p, heard)
+                None    => test.assert(true)
+                Some(_) => test.assert(true)
+
+@test
+fn test_a_legacy_query_gets_a_different_answer_entirely() [io]
+    // A legacy query comes from a normal resolver stub, which has no
+    // way to be told the answer changed — so the response is unicast,
+    // the question is echoed, the cache-flush bit is cleared and the
+    // TTL is capped at ten seconds.
+    test.case("a source port that is not 5353 is a legacy query")
+    test.assert(mdnsrec.is_legacy_query(54321))
+
+    test.case("and 5353 is not")
+    test.assert(not mdnsrec.is_legacy_query(5353))
+
+    test.case("the record it gets is capped and unflagged")
+    test.assert(not mdnsrec.cache_flush_of(
+        mdnsrec.for_legacy(mdnsrec.with_cache_flush(an_address_record("printer.local")))))
+
+@test
+fn test_the_truncated_bit_means_more_known_answers_and_not_use_tcp() [io]
+    // There is no TCP in mDNS.  A responder that read it as "retry over
+    // TCP" answers before the rest of the known answers arrive, and
+    // sends an answer the querier already had.
+    let m = mdnsrec.query_message([a_question("printer.local")], [])
+
+    test.case("an ordinary query has no more to come")
+    test.assert(not mdnsrec.has_more_known_answers(m))
+
+    test.case("and a response too large is several packets, not a truncated one")
+    let big = mdnsrec.response_message([an_address_record("printer.local")], [])
+    test.assert(list_len(mdnsresp.split_response(big, 1400)) >= 1)
+
+fn list_len(ms: [DnsMessage]) -> Int
+    var n = 0
+    for _m in ms
+        n = n + 1
+    n
+
+@test
+fn test_the_rest_of_the_surface_is_callable_from_outside() [io]
+    test.case("the cache, the browse and the responder, once each")
+    let c = mdnsquery.cache(64)
+    let m = mdnsrec.response_message([an_address_record("printer.local")], [])
+    let _f = mdnsquery.feed(c, m, 1000)
+    let _e = mdnsquery.expire(c, 1000)
+    let _l = mdnsquery.lookup(c, a_name("printer.local"), DnsTypeA)
+    let _es = mdnsquery.entries_of(c)
+    let _d = mdnsquery.due_for_refresh(c, 1000, 0)
+    let _i = mdnsquery.instances_of(c, a_name("_ipp._tcp.local"))
+    let _ka = mdnsquery.known_answers(c, a_question("printer.local"), 1000)
+    let _kn = mdnsquery.is_known(m, an_address_record("printer.local"))
+    let b = mdnsquery.browse(a_name("_ipp._tcp.local"), DnsTypePtr, 1000)
+    let _bd = mdnsquery.browse_due(b, 2000)
+    let _bm = mdnsquery.browse_message(b, c, 1000)
+    let _bs = mdnsquery.browse_sent(b, 1000)
+    match mdnsquery.accept_response(255, true)
+        Some(_) => test.assert(true)
+        None    => test.assert(true)
+
+    let r = mdnsresp.responder([an_address_record("printer.local")])
+    let _aq = mdnsresp.answers_question(r, a_question("printer.local"))
+    let _af = mdnsresp.answers_for(r, a_question("printer.local"))
+    let _ro = mdnsresp.records_of(r)
+    let _wr = mdnsresp.with_record(r, a_ptr_record("_ipp._tcp.local", "p._ipp._tcp.local"))
+    let _wn = mdnsresp.without_name(r, a_name("printer.local"))
+    let _sk = mdnsresp.split_known_answers(m, 1400)
+    match mdnsquery.entries_of(c)
+        es =>
+            for e in es
+                let _rf = mdnsquery.refresh_sent(c, e)
+    match mdnsresp.plan(r, mdnsrec.query_message([a_question("printer.local")], []),
+                        "192.168.1.9", 5353, 1000, 61)
+        None    => test.assert(true)
+        Some(p) =>
+            let _mo = mdnsresp.message_of(p, m)
+            let _sa = mdnsresp.sent_at(r, p, 1000)
+            test.assert(true)
+    test.assert(true)
+
+@test
+fn test_the_dns_sd_surface_is_callable_from_outside() [io]
+    test.case("the names, the records and the enumeration")
+    match mdnssd.service("ipp", "tcp")
+        Err(_) => test.fail("_ipp._tcp is a legal service type")
+        Ok(s)  =>
+            let _st = mdnssd.with_subtype(s, "universal")
+            let _sn = mdnssd.service_name(s, "local")
+            let _sb = mdnssd.subtype_name(s, "universal", "local")
+            let _en = mdnssd.enumeration_record(s, "local", 4500)
+            match mdnssd.instance("Printer", s, "local")
+                Err(_) => test.fail("an instance name is one label of anything")
+                Ok(i)  =>
+                    let _fn = mdnssd.full_name(i)
+                    let t = MdnsTarget { hostname: "printer", port: 631,
+                                         priority: 0, weight: 0 }
+                    let _rs = mdnssd.records_for(i, t, [mdnssd.txt_pair("rp", "p")],
+                                                 [192, 168, 1, 47])
+                    test.assert(true)
+    let _io = mdnssd.instance_of(a_name("p._ipp._tcp.local"))
+    let _hn = mdnssd.host_name("printer", "local")
+    let _il = mdnssd.is_local(a_name("printer.local"))
+    let txt = DnsRecord { name: a_name("p._ipp._tcp.local"),
+                          record_class: DnsClassInternet, ttl: 4500,
+                          data: RdataTxt([[114, 112]]) }
+    let _tp = mdnssd.txt_pairs(txt)
+    let _tr = mdnssd.txt_record(a_name("p._ipp._tcp.local"),
+                               [mdnssd.txt_flag("paperless")], 4500)
+    let _ad = mdnssd.additionals_for(an_address_record("printer.local"),
+                                     [an_address_record("printer.local")])
+    test.assert(true)
+
+@test
+fn test_the_record_surface_is_callable_from_outside() [io]
+    test.case("the class splitters, the message builders and the comparisons")
+    let r = an_address_record("printer.local")
+    let q = a_question("printer.local")
+    let _c = mdnsrec.class_of(r)
+    let _qc = mdnsrec.qclass_of(q)
+    let _dt = mdnsrec.default_ttl(r)
+    let _cr = mdnsrec.canonical_rdata(r)
+    let _sk = mdnsrec.same_key(r, r)
+    let _sr = mdnsrec.same_record(r, r)
+    let _lr = mdnsrec.legacy_response(mdnsrec.query_message([q], []), [r])
+    test.assert(true)
+
+@test
+fn test_the_multicast_group_cannot_be_joined_on_this_toolchain() [io, net, time]
+    // The package's headline missing row, asserted rather than only
+    // described: `std.net`'s datagram surface has no option call of any
+    // kind, so there is no `IP_ADD_MEMBERSHIP` to make — and without it
+    // a responder receives nothing at all, which presents as a network
+    // problem rather than as a missing feature.
+    test.case("the group address is a value this package owns")
+    test.assert_eq_str(mdnssock.group_address(), "224.0.0.251")
+
+    test.case("and opening a socket reports the membership it could not take")
+    match mdnssock.open("0.0.0.0")
+        Err(_) => test.assert(true)
+        Ok(s)  => test.assert(over_a_real_socket(s) >= 0)
+
+    test.case("the interface list is the other thing the socket half needs")
+    match mdnssock.interface_addresses()
+        Ok(_)  => test.assert(true)
+        Err(_) => test.assert(true)

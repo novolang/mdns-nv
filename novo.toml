@@ -1,0 +1,54 @@
+[package]
+name        = "mdns-nv"
+version     = "0.0.1"
+description = "Multicast DNS (RFC 6762) and DNS-based service discovery (RFC 6763) over dns-codec-nv: the probe-and-announce state machine that claims a name, conflict resolution, a responder for a service instance, a querier with a cache and known-answer suppression, and the socket half over UDP multicast.  Every timing rule is a value the caller's clock drives, so a whole conformance sequence is a test with no sleeping in it.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `host`, and SEVEN OF THE EIGHT MODULES DECLARE NOTHING.  `mdnsfault`,
+# `mdnstime`, `mdnsrec`, `mdnssd`, `mdnsclaim`, `mdnsquery` and
+# `mdnsresp` are `[]` throughout: every one of mDNS's rules is either
+# bit arithmetic over a record or a comparison of two instants, and the
+# instants are arguments.  What performs is `mdnssock` — `[net]` for
+# the datagram socket and the multicast group, `[time]` for the one
+# clock read the whole package needs.
+#
+# `layer = "host"` AND NOT `layer = "core"` WITH `host_modules`,
+# because the plan's row is `host`.  The README argues the
+# `mdns-core-nv` row the seven `[]` modules would move to, and the
+# device that wants it.
+layer       = "host"
+
+category    = "networking"
+
+tags        = ["mdns", "dns-sd", "zeroconf", "bonjour", "rfc6762", "rfc6763", "multicast", "embedded"]
+repository  = "https://github.com/novolang/mdns-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "A name on the local link, and the probe that earns it"
+
+[dependencies]
+# The wire format.  mDNS is RFC 1035's message on a different port with
+# different rules about what the fields mean, so the codec is
+# dns-codec-nv's and this package is the rules — which is the split its
+# own README names when it says the multicast half stays behind.
+#
+# ONE PLACE THEY DISAGREE, AND IT IS PUBLISHED HERE: RFC 6762 § 10.2
+# takes the top bit of the sixteen-bit class field for "flush the
+# cache", and § 5.4 takes the top bit of a question's class for "answer
+# me by unicast".  A plain DNS codec reads those as
+# `DnsClassOther(32769)`, so `mdnsrec.class_of` and
+# `mdnsrec.cache_flush_of` are the pair that splits the bit off, and
+# nothing in this package compares a class as an integer.
+dns-codec-nv = "^0.0.1"

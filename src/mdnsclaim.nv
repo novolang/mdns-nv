@@ -1,0 +1,194 @@
+// mdnsclaim.nv — probing, announcing, and what happens when somebody
+// else already has the name.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT, AND THE CLOCK IS AN ARGUMENT TO EVERY CALL.  That
+// is the whole design: the state machine performs nothing, waits for
+// nothing, and says what to do and WHEN.  A complete claim — three
+// probes 250 milliseconds apart, a conflict, a rename, three more
+// probes and two announcements — is a test that runs in microseconds
+// and produces the same answer every time.
+//
+// A NAME IS NOT YOURS UNTIL YOU HAVE PROBED FOR IT.  RFC 6762 § 8.1:
+// three queries, 250 milliseconds apart, each carrying the records you
+// PROPOSE to claim in the authority section.  A responder that
+// announced without probing takes a name somebody else is already
+// answering for, and the two of them then answer the same question
+// differently forever — which presents as a printer that works from one
+// laptop and not from another, with nothing in any log.
+//
+// AND THE TIE IS BROKEN LEXICOGRAPHICALLY, NOT BY WHO ASKED FIRST.
+// Two hosts probing simultaneously each see the other's proposed
+// records, and § 8.2's rule is to compare them: class, then type, then
+// the uncompressed rdata byte by byte, and the numerically greater one
+// wins.  The loser renames.  A responder that deferred to whoever it
+// heard from first does not converge, because both of them heard the
+// other first.
+
+// Where a claim is.
+pub enum MdnsClaimState
+    // Nothing has been sent.
+    MdnsClaimIdle
+    // Probing.  `n` counts the probes sent so far, 0 to 3.
+    MdnsClaimProbing(sent: Int)
+    // Probing was interrupted by a conflict and the name has been
+    // changed; probing restarts from zero.
+    MdnsClaimRenaming(conflicts: Int)
+    // Announcing.  `n` counts the announcements sent.
+    MdnsClaimAnnouncing(sent: Int)
+    // The name is claimed and the records are being served.
+    MdnsClaimHeld
+    // The responder is leaving: goodbyes are being sent.
+    MdnsClaimLeaving(sent: Int)
+    // Gone.
+    MdnsClaimDone
+    // Fifteen renames did not find a free name.
+    MdnsClaimGaveUp
+
+// What the caller does next.
+//
+// `MdnsClaimWait` IS THE VARIANT THAT MAKES THIS DESIGN WORK.  Every
+// rule in mDNS is "do this at time T", and a state machine that said
+// only "send this" would need a sleep somewhere — which is a sleep a
+// test cannot skip and a device's event loop cannot schedule around.
+// So the machine hands back an instant and the host decides how to wait
+// until it.
+pub enum MdnsClaimStep
+    // Multicast this message, then call `sent_at`.
+    MdnsClaimSend(message: DnsMessage, at_ms: Int)
+    // Nothing to do until `at_ms`.  Call `poll` then, or sooner if a
+    // packet arrives.
+    MdnsClaimWait(at_ms: Int)
+    // The name is held.  Serve the records.
+    MdnsClaimReady(name: DnsName)
+    // Finished leaving.
+    MdnsClaimGone
+    // Something a rename cannot fix.
+    MdnsClaimFailed(fault: MdnsFault)
+
+// A claim in progress.
+pub struct MdnsClaim
+    // The name being claimed.
+    name: DnsName
+    // The records being claimed under it, which go in a probe's
+    // authority section and in every announcement.
+    records: [DnsRecord]
+    state: MdnsClaimState
+    // When the current phase began, in the caller's own milliseconds.
+    phase_started_ms: Int
+    // The caller's random draw for the first probe's jitter, in
+    // `0 ..= MDNS_PROBE_JITTER_MS`.  An argument rather than a draw, so
+    // that `[rand]` stays out of this package and a test pins it.
+    jitter_ms: Int
+    // How many times the name has been changed.
+    conflicts: Int
+
+// A fresh claim.
+//
+// ```novo
+// use mdnsclaim
+//
+// fn start(n: DnsName, rs: [DnsRecord], now: Int) -> MdnsClaim
+//     mdnsclaim.claim(n, rs, now, 137)
+// ```
+pub fn claim(name: DnsName, records: [DnsRecord], now_ms: Int, jitter_ms: Int) -> MdnsClaim []
+    todo("mdns-nv.mdnsclaim.claim")
+
+// What to do at `now_ms`.
+//
+// The pump.  Called when the caller's timer fires and after every
+// `saw_*`, and the value it answers is the whole of the instruction.
+pub fn poll(c: MdnsClaim, now_ms: Int) -> MdnsClaimStep []
+    todo("mdns-nv.mdnsclaim.poll")
+
+// Record that the message `poll` asked for was sent.
+pub fn sent_at(c: MdnsClaim, now_ms: Int) -> MdnsClaim []
+    todo("mdns-nv.mdnsclaim.sent_at")
+
+// Feed a message that arrived while probing.
+//
+// Both kinds matter and they are handled differently.  A RESPONSE
+// carrying one of the names being claimed is a conflict outright.  A
+// PROBE carrying one of them is a simultaneous probe, and
+// `wins_tiebreak` decides which of the two renames.
+pub fn saw_message(c: MdnsClaim, m: DnsMessage, now_ms: Int) -> MdnsClaim []
+    todo("mdns-nv.mdnsclaim.saw_message")
+
+// Rename and start probing again.
+//
+// The caller supplies the new name, because what a name becomes is
+// DNS-SD's business rather than mDNS's — `mdnssd.renamed` is the rule
+// for a service instance and `mdnssd.renamed_host` for a hostname, and
+// a responder claiming something that is neither has its own.
+pub fn rename(c: MdnsClaim, name: DnsName, records: [DnsRecord], now_ms: Int,
+              jitter_ms: Int) -> MdnsClaim []
+    todo("mdns-nv.mdnsclaim.rename")
+
+// Begin leaving: two goodbyes, a second apart.
+pub fn leave(c: MdnsClaim, now_ms: Int) -> MdnsClaim []
+    todo("mdns-nv.mdnsclaim.leave")
+
+// Whether this claim beats another host's simultaneous probe.
+//
+// RFC 6762 § 8.2's comparison, and it is over WIRE BYTES: class first,
+// then type, then the uncompressed rdata byte by byte, with the
+// numerically greater winning.  Two properties make it work and both
+// are easy to lose — it is the same answer computed on both hosts, and
+// it does not depend on who heard whom first, which is what a
+// first-come rule cannot say.
+//
+// ```novo
+// use mdnsclaim
+//
+// fn wins(mine: [DnsRecord], theirs: [DnsRecord]) -> Bool
+//     mdnsclaim.wins_tiebreak(mine, theirs)
+// ```
+pub fn wins_tiebreak(mine: [DnsRecord], theirs: [DnsRecord]) -> Bool []
+    todo("mdns-nv.mdnsclaim.wins_tiebreak")
+
+// Whether a message conflicts with this claim.
+//
+// A response is a conflict when it answers for one of the claimed
+// names with DIFFERENT rdata.  The same rdata is not a conflict: it is
+// this host's own announcement coming back off the link, which happens
+// on every interface with multicast loopback on.
+pub fn conflicts_with(c: MdnsClaim, m: DnsMessage) -> Bool []
+    todo("mdns-nv.mdnsclaim.conflicts_with")
+
+// Where the claim is.
+pub fn state_of(c: MdnsClaim) -> MdnsClaimState []
+    todo("mdns-nv.mdnsclaim.state_of")
+
+// How many times the name has been changed.
+pub fn conflicts_of(c: MdnsClaim) -> Int []
+    todo("mdns-nv.mdnsclaim.conflicts_of")
+
+// Whether the name is held and the records may be served.
+pub fn is_held(c: MdnsClaim) -> Bool []
+    todo("mdns-nv.mdnsclaim.is_held")
+
+// The records this claim serves.
+pub fn records_of(c: MdnsClaim) -> [DnsRecord] []
+    todo("mdns-nv.mdnsclaim.records_of")
+
+// The probe message for the `n`th probe.
+//
+// Published because a caller driving its own schedule builds the same
+// message, and because the authority section is the part most likely to
+// be left out — a probe without it is a query, and a query does not
+// break a tie.
+pub fn probe_message_of(c: MdnsClaim) -> DnsMessage []
+    todo("mdns-nv.mdnsclaim.probe_message_of")
+
+// The announcement message.
+//
+// Every claimed record, with the cache-flush bit set on all of them —
+// which is what tells the link to replace whatever it had rather than
+// hold both answers.
+pub fn announcement_of(c: MdnsClaim) -> DnsMessage []
+    todo("mdns-nv.mdnsclaim.announcement_of")
+
+// The goodbye message: the same records at a TTL of zero.
+pub fn goodbye_of(c: MdnsClaim) -> DnsMessage []
+    todo("mdns-nv.mdnsclaim.goodbye_of")

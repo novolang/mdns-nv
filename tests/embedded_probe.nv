@@ -1,0 +1,129 @@
+// tests/embedded_probe.nv — this package's device claim, as a program
+// that either builds for a Cortex-M or does not.
+//
+// THE CONSUMER IS A DEVICE THAT WANTS A NAME ON THE LOCAL LINK.  A
+// sensor, a lamp, a controller: it has an address, it wants to be
+// `kitchen.local` rather than `192.168.1.47`, and the whole of what
+// that costs is three probes 250 milliseconds apart and two
+// announcements.  Every one of those rules is arithmetic over
+// milliseconds, and this program is that arithmetic run on the hardware.
+//
+// WHAT IS NOT HERE, AND WHY.  Everything that names dns-codec-nv.
+// `mdnsrec`, `mdnssd`, `mdnsclaim`, `mdnsquery` and `mdnsresp` all
+// hold `DnsRecord`s, and the audit builds a probe against this
+// package's own modules only — so naming one is a claim that cannot be
+// checked.  `mdnstime` is the module that names nothing else, and it
+// is where every rule with a number in it lives, on purpose.
+//
+// A device's own responder then holds the records as bytes it built
+// once at compile time and drives `mdnstime` for the schedule, which is
+// the split this file exists to prove is real.
+
+use std.str
+use mdnstime
+
+// Every answer this probe checks, folded into one number so a single
+// comparison decides the run.
+//
+// A firmware image has one line of output; making it depend on all of
+// them is what stops a passing run from meaning "the first assertion
+// held".
+@tier(rt)
+fn score() -> Int
+    var n = 0
+
+    // THE TWO BITS THE PROTOCOL STEALS FROM THE CLASS FIELD.  A
+    // responder that compared the class as an integer matches nothing,
+    // on a network where everything looks fine.
+    if mdnstime.class_bits(0x8001) == 1
+        n = n + 1
+    if mdnstime.has_class_bit(0x8001)
+        n = n + 1
+    if not mdnstime.has_class_bit(0x0001)
+        n = n + 1
+    if mdnstime.with_class_bit(1) == 0x8001
+        n = n + 1
+
+    // The probe schedule: three probes, 250 milliseconds apart, after a
+    // jitter the caller drew.
+    if mdnstime.probe_at_ms(1000, 100, 0) == 1100
+        n = n + 1
+    if mdnstime.probe_at_ms(1000, 100, 1) == 1350
+        n = n + 1
+    if mdnstime.probe_at_ms(1000, 100, 2) == 1600
+        n = n + 1
+
+    // The announcements: the first immediate, the second a second
+    // later, doubling after that.
+    if mdnstime.announce_at_ms(2000, 0) == 2000
+        n = n + 1
+    if mdnstime.announce_at_ms(2000, 1) == 3000
+        n = n + 1
+
+    // The deferral that keeps several responders from colliding: a draw
+    // inside 20 to 120 milliseconds, whatever the caller handed in.
+    if mdnstime.defer_ms(0) >= mdnstime.MDNS_DEFER_MIN_MS
+        n = n + 1
+    if mdnstime.defer_ms(1000000) <= mdnstime.MDNS_DEFER_MAX_MS
+        n = n + 1
+
+    // The one-second window an answer stays suppressed for.
+    if mdnstime.is_suppressed(1000, 1500)
+        n = n + 1
+    if not mdnstime.is_suppressed(1000, 2500)
+        n = n + 1
+
+    // Cache lifetimes, in the two units the protocol mixes: a TTL is
+    // seconds and every schedule is milliseconds.
+    if mdnstime.expires_at_ms(0, 120) == 120000
+        n = n + 1
+    if mdnstime.remaining_ttl(0, 120, 60000) == 60
+        n = n + 1
+
+    // THE HALF-LIFE RULE.  A known answer may only be included while
+    // more than half its lifetime remains, or a querier suppresses the
+    // very response that would have refreshed its own cache.
+    if mdnstime.may_suppress(0, 120, 30000)
+        n = n + 1
+    if not mdnstime.may_suppress(0, 120, 90000)
+        n = n + 1
+
+    // The four refreshes, at 80 per cent and upwards.
+    if mdnstime.refresh_at_ms(0, 100, 0, 0) == 80000
+        n = n + 1
+    if mdnstime.refresh_at_ms(0, 100, 3, 0) == 95000
+        n = n + 1
+
+    // The continuous query's backoff, and its ceiling.
+    if mdnstime.next_query_ms(1000) == 2000
+        n = n + 1
+    if mdnstime.next_query_ms(mdnstime.MDNS_QUERY_MAX_MS) == mdnstime.MDNS_QUERY_MAX_MS
+        n = n + 1
+
+    // The two lifetimes: 120 seconds for an address, 4500 for the rest.
+    if mdnstime.default_ttl_for(1) == mdnstime.MDNS_TTL_HOST
+        n = n + 1
+    if mdnstime.default_ttl_for(12) == mdnstime.MDNS_TTL_OTHER
+        n = n + 1
+
+    // And the backoff after a link that will not yield.
+    if mdnstime.conflict_backoff_ms(mdnstime.MDNS_MAX_CONFLICTS + 1) >= 5000
+        n = n + 1
+
+    n
+
+@tier(rt)
+fn main() [hw, time]
+    bsp.board.init()
+    // 24 is the number of checks in `score`.  The count is printed on a
+    // failure rather than only compared, so a device that disagrees with
+    // the host says HOW MANY it lost and a bisect has somewhere to start.
+    let n = score()
+    if n == 24
+        hal.uart.write("PASS: mdns-embedded\n")
+    else
+        hal.uart.write("FAIL: mdns-embedded score=")
+        hal.uart.write(str.from_int(n))
+        hal.uart.write("\n")
+    loop
+        core.rt.sleep_ms(1000)

@@ -1,0 +1,149 @@
+// mdnssock.nv — the half that touches the machine: one datagram
+// socket, one multicast group, and one clock.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// THIS IS THE ONLY MODULE IN THE PACKAGE WITH AN EFFECT ROW.  Seven
+// modules under `src/` are `[]` throughout, and every timing rule above
+// takes `now_ms` as an argument — so `now_ms` here is the ONE clock
+// read in the whole package, called once per turn of the caller's loop
+// and passed down.
+//
+// FOUR SOCKET OPTIONS, AND THE STANDARD LIBRARY EXPOSES NONE OF THEM.
+// An mDNS socket needs: membership of 224.0.0.251 (`IP_ADD_MEMBERSHIP`),
+// an outgoing multicast TTL of 255 (`IP_MULTICAST_TTL`), address reuse
+// so that several processes on one machine can share port 5353
+// (`SO_REUSEPORT`), and a bind to the interface's own address rather
+// than to every address.  `std.net`'s datagram surface is
+// `udp_socket`, `udp_bind(port)`, `udp_send_to` and `udp_recv_from`,
+// and there is no option call of any kind.
+//
+// Without the membership a responder receives nothing at all, which
+// presents as a network problem rather than as a missing feature.
+// Without the TTL its packets are dropped by receivers that check § 11.
+// Without address reuse the second program on the machine cannot start.
+//
+// So `join_group` has a fault of its own — `MdnsFaultNoMulticastMembership`
+// — the README names the stdlib row, and the signatures here are
+// written against the API that row would provide.  Writing them against
+// the one that exists would be designing around a defect rather than
+// reporting it.
+//
+// AND `udp_recv_from` ANSWERS A NUL-TERMINATED STRING, so a datagram is
+// truncated at its first zero byte.  A DNS message's header is twelve
+// bytes of which at least six are usually zero, and every name ends
+// with a zero-length label — so in practice no mDNS packet survives
+// that API at all.  Same README section, same row.
+
+use mdnsquery
+use mdnsrec
+
+// One open mDNS socket.
+pub struct MdnsSocket
+    // The datagram socket.
+    sock: Int
+    // The interface address it was bound to, which is also the address
+    // an A record advertises.
+    local: Str
+    // Whether the multicast group was joined.  FALSE is a working
+    // socket that will never receive a query, which is why it is a
+    // field a caller can read rather than something assumed.
+    joined: Bool
+
+// One datagram that arrived.
+pub struct MdnsDatagram
+    // The message, decoded.
+    message: DnsMessage
+    // The sender's address.
+    from: Str
+    // The sender's port.  Not 5353 means a legacy query, which gets a
+    // different answer — see `mdnsrec.is_legacy_query`.
+    from_port: Int
+    // The IP TTL the packet arrived with, or -1 when the platform did
+    // not supply it.  255 is what RFC 6762 § 11 requires; -1 is
+    // "unknown" and not "bad", because refusing every packet on a
+    // platform that cannot report it would be worse than not checking.
+    ip_ttl: Int
+
+// Open a socket on one interface and join the multicast group.
+//
+// `[net]`.  `local` is the interface's own address; binding to it
+// rather than to every address is what stops a responder on a laptop
+// with three interfaces from answering a query on one and advertising
+// the address of another.
+//
+// Answers `MdnsFaultNoMulticastMembership` when the group cannot be
+// joined, which on this toolchain is always — see the module comment.
+pub fn open(local: Str) -> Result<MdnsSocket, MdnsFault> [net]
+    todo("mdns-nv.mdnssock.open")
+
+// Join the multicast group on an already-open socket.
+//
+// Published separately because a caller with its own socket — a device
+// with a radio, a program that inherited a descriptor — needs the join
+// and not the open.
+pub fn join_group(s: MdnsSocket) -> ?MdnsFault [net]
+    todo("mdns-nv.mdnssock.join_group")
+
+// Leave the group and close.
+//
+// The goodbyes are `mdnsclaim.leave`'s business and have to be sent
+// BEFORE this: a responder that closed the socket first leaves its
+// records in every cache on the link for seventy-five minutes.
+pub fn close(s: MdnsSocket) -> ?MdnsFault [net]
+    todo("mdns-nv.mdnssock.close")
+
+// Multicast a message to the group.
+//
+// `[net]`.
+pub fn send_multicast(s: MdnsSocket, m: DnsMessage) -> ?MdnsFault [net]
+    todo("mdns-nv.mdnssock.send_multicast")
+
+// Send a message to one address and port.
+//
+// What a unicast response and a reply to a legacy query use.
+pub fn send_to(s: MdnsSocket, m: DnsMessage, to: Str, port: Int) -> ?MdnsFault [net]
+    todo("mdns-nv.mdnssock.send_to")
+
+// Wait up to `timeout_ms` for one datagram.
+//
+// `[net]`.  Answers nothing on a timeout, which is the ordinary case in
+// a loop that is mostly waiting for its own next timer.
+pub fn recv(s: MdnsSocket, timeout_ms: Int) -> Result<?MdnsDatagram, MdnsFault> [net]
+    todo("mdns-nv.mdnssock.recv")
+
+// The caller's monotonic clock in milliseconds.
+//
+// `[time]`, and THE ONE CLOCK READ IN THE PACKAGE.  Every state machine
+// above takes the number this answers; nothing else reads a clock, which
+// is what makes a whole probe-announce-conflict-rename sequence a test
+// that runs in microseconds.
+//
+// Monotonic and not wall-clock: mDNS's rules are all about elapsed
+// time, and a responder whose intervals jumped when NTP stepped the
+// clock would probe twice or not at all.
+pub fn now_ms() -> Int [time]
+    todo("mdns-nv.mdnssock.now_ms")
+
+// Whether an address is on the same link as this socket.
+//
+// `[net]`, because the honest answer needs the interface's netmask.
+// What `mdnsquery.accept_response` takes as its `from_link_local`
+// argument.
+pub fn is_link_local(s: MdnsSocket, from: Str) -> Bool [net]
+    todo("mdns-nv.mdnssock.is_link_local")
+
+// The addresses of the machine's interfaces.
+//
+// `[net]`.  What a caller passes to `open`, and what an A record
+// advertises.  A responder that advertised one interface's address on
+// another's link is reachable from nowhere.
+pub fn interface_addresses() -> Result<[Str], MdnsFault> [net]
+    todo("mdns-nv.mdnssock.interface_addresses")
+
+// The multicast group as a string, for a caller building its own
+// socket.
+//
+// `[]`: it is a constant rendered.
+pub fn group_address() -> Str []
+    todo("mdns-nv.mdnssock.group_address")

@@ -1,0 +1,250 @@
+// mdnstime.nv — every timing rule in mDNS, as integer arithmetic over
+// milliseconds, and the two bits the protocol steals from the class
+// field.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT AND `@tier(embedded)` ON ALL OF IT.  This module
+// names nothing from dns-codec-nv and nothing from the standard
+// library: it is integers in and integers out, which is what makes
+// `tests/embedded_probe.nv` a program that builds for a Cortex-M.
+//
+// EVERY RULE IN mDNS IS A TIMING RULE, and that is why this module is
+// first.  A name is claimed by three probes 250 milliseconds apart.  A
+// response to a shared record is deferred by a random 20 to 120
+// milliseconds so that several responders aggregate rather than
+// collide.  An answer already multicast in the last second is
+// suppressed.  A cached record is refreshed at 80, 85, 90 and 95 per
+// cent of its lifetime.  A continuous query backs off by doubling to a
+// ceiling of one hour.  A responder that got any one of these wrong
+// works perfectly on a quiet desk and floods a conference network.
+//
+// So the rules are here, as numbers, where a test can assert them
+// without sleeping — and the state machines above take `now_ms` as an
+// argument rather than reading a clock.  A whole probe-and-announce
+// sequence is then a table of times and a sequence of calls, and it
+// runs in microseconds.
+//
+// THE RANDOM DELAYS ARE ARGUMENTS FOR THE SAME REASON THE CLOCK IS.
+// `defer_ms` takes the caller's random draw rather than making one;
+// `[rand]` stays out of this package's row and a test pins the draw.
+
+// The two bits RFC 6762 takes from the sixteen-bit class field.
+//
+// `0x8000` in a RESOURCE RECORD's class means "flush the cache for
+// this name and type"; the same bit in a QUESTION's class means
+// "answer me by unicast".  Same bit, two meanings, and which one it
+// has depends on which section the record is in — which is why
+// `mdnsrec` has two functions rather than one.
+pub const MDNS_CLASS_BIT = 0x8000
+
+// The class field with the top bit masked off.
+pub const MDNS_CLASS_MASK = 0x7FFF
+
+// The multicast port both the querier and the responder bind.
+pub const MDNS_PORT = 5353
+
+// The IPv4 multicast group, `224.0.0.251`, as four octets in one
+// big-endian integer.
+//
+// Not an `Ipv4` from ipaddr-nv: this module names no other package's
+// types, because a device holds four octets out of a header rather than
+// a parsed address.  `mdnssock` is where it becomes a string.
+pub const MDNS_GROUP_V4 = 0xE00000FB
+
+// The TTL every mDNS packet must carry in its IP header: 255.
+//
+// RFC 6762 § 11's rule, and it is a security check rather than a
+// routing one: a receiver may refuse a packet whose TTL is not 255,
+// because anything less has been forwarded and mDNS is link-local by
+// definition.  A sender that left the default of 1 has a responder
+// nobody refuses and a querier some implementations ignore.
+pub const MDNS_IP_TTL = 255
+
+// How long a record that names a host is good for, in seconds: 120.
+//
+// The short lifetime, for A, AAAA and SRV — anything whose answer stops
+// being true when the machine moves or goes away.
+pub const MDNS_TTL_HOST = 120
+
+// How long every other record is good for, in seconds: 4500.
+//
+// Seventy-five minutes, for PTR and TXT.  The two lifetimes are the
+// specification's and not a tuning choice: a responder that used the
+// long one for an address keeps a stale answer in every cache on the
+// link for an hour after the machine left.
+pub const MDNS_TTL_OTHER = 4500
+
+// How many probes are sent before a name is claimed: three.
+pub const MDNS_PROBE_COUNT = 3
+
+// How long between probes, in milliseconds: 250.
+pub const MDNS_PROBE_INTERVAL_MS = 250
+
+// How long to wait before the first probe, in milliseconds.
+//
+// A random 0 to 250: if every device on a link powered up together and
+// probed at once, they would all collide and all rename.
+pub const MDNS_PROBE_JITTER_MS = 250
+
+// How many announcements follow a successful probe: at least two.
+pub const MDNS_ANNOUNCE_COUNT = 2
+
+// How long between the first announcement and the second, in
+// milliseconds: 1000, doubling after that.
+pub const MDNS_ANNOUNCE_INTERVAL_MS = 1000
+
+// The shortest a response to a shared record may be deferred, in
+// milliseconds: 20.
+pub const MDNS_DEFER_MIN_MS = 20
+
+// The longest: 120.
+pub const MDNS_DEFER_MAX_MS = 120
+
+// How long an answer stays suppressed after it was multicast, in
+// milliseconds: 1000.
+pub const MDNS_DUPLICATE_WINDOW_MS = 1000
+
+// The first interval of a continuous query, in milliseconds: 1000.
+pub const MDNS_QUERY_FIRST_MS = 1000
+
+// The ceiling a continuous query's interval doubles up to, in
+// milliseconds: one hour.
+pub const MDNS_QUERY_MAX_MS = 3600000
+
+// How many times a probing host may rename before it gives up.
+//
+// Fifteen, and then it waits five seconds before trying again — RFC
+// 6762 § 9's rule for a host that is fighting something that is not
+// going to yield.
+pub const MDNS_MAX_CONFLICTS = 15
+
+// The class a record carries, with the cache-flush bit removed.
+//
+// ```novo
+// use mdnstime
+//
+// fn plain(c: Int) -> Int
+//     mdnstime.class_bits(c)
+// ```
+pub @tier(embedded)
+fn class_bits(class_code: Int) -> Int []
+    todo("mdns-nv.mdnstime.class_bits")
+
+// Whether a class field has the top bit set.
+//
+// In an answer that means "flush the cache"; in a question it means
+// "answer by unicast".  One function for the bit, two named wrappers in
+// `mdnsrec` for the two meanings, because collapsing them is how a
+// responder ends up answering a multicast question by unicast and
+// leaving every other device on the link without the answer.
+pub @tier(embedded)
+fn has_class_bit(class_code: Int) -> Bool []
+    todo("mdns-nv.mdnstime.has_class_bit")
+
+// A class field with the top bit set.
+pub @tier(embedded)
+fn with_class_bit(class_code: Int) -> Int []
+    todo("mdns-nv.mdnstime.with_class_bit")
+
+// When the `n`th probe should be sent, in milliseconds.
+//
+// `start_ms` is when the claim began and `jitter_ms` is the caller's
+// random draw in `0 ..= MDNS_PROBE_JITTER_MS`.  Probe zero is at
+// `start + jitter`, and each one after is 250 milliseconds later.
+pub @tier(embedded)
+fn probe_at_ms(start_ms: Int, jitter_ms: Int, n: Int) -> Int []
+    todo("mdns-nv.mdnstime.probe_at_ms")
+
+// When the `n`th announcement should be sent, in milliseconds.
+//
+// The first is immediate; each one after is twice as far from the
+// claim as the last, which is what "at least two announcements, one
+// second apart, increasing" means in arithmetic.
+pub @tier(embedded)
+fn announce_at_ms(claimed_ms: Int, n: Int) -> Int []
+    todo("mdns-nv.mdnstime.announce_at_ms")
+
+// How long to defer a response, in milliseconds.
+//
+// `draw` is the caller's random number; the answer is in
+// `MDNS_DEFER_MIN_MS ..= MDNS_DEFER_MAX_MS`.  The deferral is what lets
+// several responders aggregate into one packet instead of colliding,
+// and a responder that answered immediately is the one that makes a
+// conference network unusable.
+pub @tier(embedded)
+fn defer_ms(draw: Int) -> Int []
+    todo("mdns-nv.mdnstime.defer_ms")
+
+// Whether an answer multicast at `last_ms` is still suppressed at
+// `now_ms`.
+pub @tier(embedded)
+fn is_suppressed(last_ms: Int, now_ms: Int) -> Bool []
+    todo("mdns-nv.mdnstime.is_suppressed")
+
+// When a cached record should be re-queried, in milliseconds.
+//
+// `n` counts the four refreshes: at 80, 85, 90 and 95 per cent of the
+// record's lifetime, each with up to two per cent of random jitter.
+// Four and not one, because a single refresh at 80 per cent that is
+// lost leaves the record to expire — and an entry that expires out of
+// a cache is a printer that vanishes from a list while it is still
+// plugged in.
+pub @tier(embedded)
+fn refresh_at_ms(received_ms: Int, ttl_seconds: Int, n: Int, jitter_percent: Int) -> Int []
+    todo("mdns-nv.mdnstime.refresh_at_ms")
+
+// When a cached record expires, in milliseconds.
+pub @tier(embedded)
+fn expires_at_ms(received_ms: Int, ttl_seconds: Int) -> Int []
+    todo("mdns-nv.mdnstime.expires_at_ms")
+
+// Whether a cached record's remaining lifetime is more than half of
+// what it started with.
+//
+// THE KNOWN-ANSWER SUPPRESSION RULE, and it is this and not "do I have
+// it".  A querier includes in its question the answers it already
+// holds, so responders can stay quiet; but it may only include one
+// whose remaining TTL is above half, because an answer the querier is
+// about to have to refresh anyway would suppress the very response
+// that would have refreshed it.  A querier that included everything
+// slowly starves its own cache.
+pub @tier(embedded)
+fn may_suppress(received_ms: Int, ttl_seconds: Int, now_ms: Int) -> Bool []
+    todo("mdns-nv.mdnstime.may_suppress")
+
+// The remaining lifetime of a cached record, in seconds.
+//
+// What goes in the TTL field of a known-answer record: the time it has
+// LEFT and not the time it was given, because a responder compares the
+// two to decide whether its own answer is worth sending.
+pub @tier(embedded)
+fn remaining_ttl(received_ms: Int, ttl_seconds: Int, now_ms: Int) -> Int []
+    todo("mdns-nv.mdnstime.remaining_ttl")
+
+// The interval after a continuous query, in milliseconds.
+//
+// Doubles, to a ceiling of an hour.  A querier that kept asking every
+// second is a querier that is indistinguishable from a fault.
+pub @tier(embedded)
+fn next_query_ms(previous_ms: Int) -> Int []
+    todo("mdns-nv.mdnstime.next_query_ms")
+
+// How long to wait after too many conflicts, in milliseconds.
+//
+// Five seconds, once the rename count passes `MDNS_MAX_CONFLICTS`.
+// Something on the link is not yielding, and continuing to rename
+// fifteen times a second makes it worse for everybody.
+pub @tier(embedded)
+fn conflict_backoff_ms(conflicts: Int) -> Int []
+    todo("mdns-nv.mdnstime.conflict_backoff_ms")
+
+// The default lifetime for a record of this type code, in seconds.
+//
+// 120 for A, AAAA and SRV; 4500 for everything else.  The type code is
+// an integer rather than dns-codec-nv's `DnsType` so that this module
+// names no other package, which is what keeps it buildable for a
+// device.
+pub @tier(embedded)
+fn default_ttl_for(type_code: Int) -> Int []
+    todo("mdns-nv.mdnstime.default_ttl_for")

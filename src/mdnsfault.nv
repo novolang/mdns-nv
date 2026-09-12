@@ -1,0 +1,75 @@
+// mdnsfault.nv — what can go wrong, as values.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT.
+//
+// A CONFLICT IS NOT A FAULT AND IT IS NOT IN THIS ENUM.  Somebody else
+// on the link already has the name you asked for; the protocol's answer
+// is to rename and try again, and `mdnsclaim` does that as a state
+// transition rather than an error.  What is here is the case where
+// renaming fifteen times did not help, which is a different thing and a
+// caller has to be told.
+
+// Why something could not be done.
+pub enum MdnsFault
+    // A service type that is not RFC 6763 § 4.1.2's grammar: one or two
+    // labels, the first `_name` with at most fifteen characters after
+    // the underscore, the second `_tcp` or `_udp`.
+    MdnsFaultBadServiceType(text: Str)
+    // An instance name that is not a single label of at most 63 bytes
+    // of UTF-8.  An instance name is a HUMAN-READABLE string with
+    // spaces and punctuation in it, and the mistake this catches is a
+    // caller that already escaped it.
+    MdnsFaultBadInstanceName(text: Str)
+    // A hostname that is not a single label under `.local`.
+    MdnsFaultBadHostname(text: Str)
+    // A TXT key that is empty, longer than nine characters, contains an
+    // `=`, or is a duplicate of one already in the record.
+    MdnsFaultBadTxtKey(key: Str)
+    // One TXT string over 255 bytes, or a whole record over the
+    // 1300-byte ceiling that keeps a response inside one packet.
+    MdnsFaultTxtTooLong(bytes: Int)
+    // The name was claimed by somebody else and renaming
+    // `MDNS_MAX_CONFLICTS` times did not find a free one.  Something on
+    // the link is not yielding, and this is where a caller is told
+    // rather than left in a loop.
+    MdnsFaultTooManyConflicts(tried: Int)
+    // The message would not fit in one packet even after this package
+    // split it.
+    MdnsFaultMessageTooLarge(bytes: Int)
+    // dns-codec-nv refused the bytes.
+    MdnsFaultCodec(detail: Str)
+    // The socket could not be opened or bound.
+    MdnsFaultTransport(detail: Str)
+    // THE MULTICAST GROUP COULD NOT BE JOINED.  Named separately from a
+    // transport failure because on this toolchain it is not a failure at
+    // all — see the README: the standard library exposes no group
+    // membership, so there is nothing to call.  A responder that skipped
+    // the join receives nothing and looks like a network problem.
+    MdnsFaultNoMulticastMembership(group: Str)
+    // A reply arrived from off the local link.  mDNS is link-local by
+    // definition and RFC 6762 § 11 says a receiver may check the IP TTL
+    // for 255; a packet that failed that check is this.
+    MdnsFaultNotLinkLocal(from: Str)
+
+// Whether a caller should try again with a different name.
+//
+// True only for `MdnsFaultTooManyConflicts`, and it answers false —
+// which is the point of the function.  Fifteen renames is the protocol
+// saying the link has something on it that will not yield, and a caller
+// that looped anyway is adding to the noise.
+pub fn rename_would_help(f: MdnsFault) -> Bool []
+    todo("mdns-nv.mdnsfault.rename_would_help")
+
+// What went wrong, in one line.
+//
+// ```novo
+// use mdnsfault
+//
+// fn report(f: MdnsFault) -> Str
+//     f.message()
+// ```
+impl Error for MdnsFault
+    fn message(self) -> Str
+        todo("mdns-nv.mdnsfault.MdnsFault.message")

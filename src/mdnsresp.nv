@@ -1,0 +1,151 @@
+// mdnsresp.nv — answering, and the four reasons not to.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `[]` THROUGHOUT, AND THE CLOCK IS AN ARGUMENT.
+//
+// MOST OF A RESPONDER IS DECIDING NOT TO ANSWER.  A query arrives and
+// four rules each say no: the record is already in the query's
+// known-answer list; the same answer was multicast in the last second;
+// another responder has just multicast it; or the name is not one this
+// responder holds.  A responder that only implemented the fourth works
+// on a desk with two devices and makes a conference network unusable —
+// which is exactly the failure that is hardest to reproduce and hardest
+// to attribute.
+//
+// SO THE ANSWER TO A QUERY IS A PLAN AND NOT A MESSAGE.  `plan` says
+// which records to send and WHEN, `suppress` is what a caller applies
+// when it overhears another responder answering in the deferral window,
+// and `message_of` is the last step.  Three functions, because the
+// middle one is the one that would otherwise not exist.
+
+// A response waiting to go out.
+pub struct MdnsPlan
+    // The records to send.
+    answers: [DnsRecord]
+    // The records that ride along unasked.
+    additionals: [DnsRecord]
+    // When to send, in the caller's milliseconds.  Now for a unique
+    // record, deferred 20 to 120 milliseconds for a shared one.
+    at_ms: Int
+    // Whether the response goes to the multicast group or back to the
+    // asker.
+    unicast: Bool
+    // Where to send a unicast response.  Empty when `unicast` is false.
+    to: Str
+
+// What a responder holds and serves.
+pub struct MdnsResponder
+    // The records this responder is authoritative for.
+    records: [DnsRecord]
+    // When each was last multicast, parallel to `records`.  The
+    // duplicate-suppression window is a property of the record and the
+    // clock, so it lives here rather than in a mutable field somewhere.
+    last_sent_ms: [Int]
+
+// A responder over a set of records.
+//
+// ```novo
+// use mdnsresp
+//
+// fn r(rs: [DnsRecord]) -> MdnsResponder
+//     mdnsresp.responder(rs)
+// ```
+pub fn responder(records: [DnsRecord]) -> MdnsResponder []
+    todo("mdns-nv.mdnsresp.responder")
+
+// What to send in reply to a query, and when.
+//
+// `draw` is the caller's random number for the deferral; `from_port`
+// decides whether this is a legacy query and therefore unicast.
+// Answers nothing at all when all four suppression rules say no, which
+// is the common case on a busy link and the whole point of the module.
+//
+// ```novo
+// use mdnsresp
+//
+// fn p(r: MdnsResponder, q: DnsMessage, now: Int) -> ?MdnsPlan
+//     mdnsresp.plan(r, q, "10.0.0.7", 5353, now, 61)
+// ```
+pub fn plan(r: MdnsResponder, query: DnsMessage, from: Str, from_port: Int, now_ms: Int,
+            draw: Int) -> ?MdnsPlan []
+    todo("mdns-nv.mdnsresp.plan")
+
+// Drop from a plan anything another responder has just answered.
+//
+// The rule that needs a function of its own: between planning a
+// deferred response and sending it, another responder may multicast the
+// same record, and this responder must then stay quiet.  Answers
+// nothing when the whole plan was covered.
+//
+// A responder without this sends the second copy of every shared
+// answer on the link, which is invisible with two devices and doubles
+// the traffic with fifty.
+pub fn suppress(p: MdnsPlan, heard: DnsMessage) -> ?MdnsPlan []
+    todo("mdns-nv.mdnsresp.suppress")
+
+// The message a plan sends.
+pub fn message_of(p: MdnsPlan, query: DnsMessage) -> DnsMessage []
+    todo("mdns-nv.mdnsresp.message_of")
+
+// Record that a plan's records were sent, for the duplicate window.
+pub fn sent_at(r: MdnsResponder, p: MdnsPlan, now_ms: Int) -> MdnsResponder []
+    todo("mdns-nv.mdnsresp.sent_at")
+
+// Whether this responder holds an answer for a question.
+pub fn answers_question(r: MdnsResponder, q: DnsQuestion) -> Bool []
+    todo("mdns-nv.mdnsresp.answers_question")
+
+// The records that answer a question.
+pub fn answers_for(r: MdnsResponder, q: DnsQuestion) -> [DnsRecord] []
+    todo("mdns-nv.mdnsresp.answers_for")
+
+// Whether a record is unique to this responder or shared with others.
+//
+// The difference decides the timing: a unique record — an SRV, a TXT,
+// an address for a name this host probed for — is answered
+// IMMEDIATELY, because nobody else can answer it.  A shared record —
+// the PTR that says "this service type has this instance", which every
+// instance answers — is DEFERRED, so that several responders aggregate
+// instead of colliding.
+//
+// A responder that treated everything as unique is the one that makes a
+// browse for `_ipp._tcp` produce forty simultaneous packets.
+pub fn is_unique(r: MdnsResponder, record: DnsRecord) -> Bool []
+    todo("mdns-nv.mdnsresp.is_unique")
+
+// Whether a record was multicast recently enough to stay quiet about.
+pub fn recently_sent(r: MdnsResponder, record: DnsRecord, now_ms: Int) -> Bool []
+    todo("mdns-nv.mdnsresp.recently_sent")
+
+// Split a response that does not fit into several that do.
+//
+// mDNS has no TCP fallback, so a response too large for one datagram is
+// several datagrams and not a truncated one.  The rule is that a
+// response may be split freely; it is a QUERY's known-answer list that
+// has to set the truncated bit and follow within 500 milliseconds.
+pub fn split_response(m: DnsMessage, max_bytes: Int) -> [DnsMessage] []
+    todo("mdns-nv.mdnsresp.split_response")
+
+// Split a query's known answers across several packets.
+//
+// Each packet but the last sets the truncated bit, which in mDNS means
+// "more known answers follow" rather than "retry over TCP".  A
+// responder waits 400 to 500 milliseconds for them before answering.
+pub fn split_known_answers(m: DnsMessage, max_bytes: Int) -> [DnsMessage] []
+    todo("mdns-nv.mdnsresp.split_known_answers")
+
+// The responder's records, for a caller that wants to see them.
+pub fn records_of(r: MdnsResponder) -> [DnsRecord] []
+    todo("mdns-nv.mdnsresp.records_of")
+
+// The same responder with one more record.
+pub fn with_record(r: MdnsResponder, record: DnsRecord) -> MdnsResponder []
+    todo("mdns-nv.mdnsresp.with_record")
+
+// The same responder without the records under a name.
+//
+// What a service being withdrawn does, after its goodbyes have gone
+// out.
+pub fn without_name(r: MdnsResponder, name: DnsName) -> MdnsResponder []
+    todo("mdns-nv.mdnsresp.without_name")
