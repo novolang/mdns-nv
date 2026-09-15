@@ -5,6 +5,10 @@ All notable changes to mdns-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.0.2 — 2026-09-15
+
+README rewritten to the package README style guide (docs/writing-a-readme.md); no change to the interface.
+
 ## 0.0.1 — 2026-09-12
 
 The **interface**: every signature and every effect row, and no bodies.
@@ -63,3 +67,37 @@ received packet's IP TTL.
 **`mdns-core-nv`**, which the README recommends taking: the commonest
 mDNS responder in the world is a device, and a device cannot depend on a
 package that names `std.net` anywhere in its assembly.
+
+### Design notes
+
+**Seven of the eight modules declare no effects, and the split is
+arranged so they can move.** Only `mdnssock` needs the network and the
+clock; it depends on the other seven and nothing depends on it. An
+`mdns-core-nv` would be `mdnsfault`, `mdnstime`, `mdnsrec`, `mdnssd`,
+`mdnsclaim`, `mdnsquery` and `mdnsresp` unchanged, leaving `mdnssock`
+here. The consumer for it is a device, which cannot depend on a package
+that names `std.net` anywhere in its assembly. Only `mdnstime` can carry
+the embedded tier as things stand, because the other six name
+dns-codec-nv's types and a probe cannot be built against a dependency's
+sources on this toolchain.
+
+**`[rand]` was not taken.** mDNS needs three random draws: the delay
+before the first probe, the deferral on a shared answer, and the jitter
+on a cache refresh. All three are arguments — `jitter_ms`, `draw`,
+`jitter_percent` — so the declared effects stay `[net, time]` and every
+schedule is reproducible in a test. ntp-nv made the same choice for its
+nonce and tls-nv for its handshake randomness.
+
+**`[time]` is one function and it is monotonic.** That is a different
+clock from the civil-time reads tls-nv and s3-nv make.
+
+**Three things changed against the reference implementations**, which
+are the `mdns` Rust crate for browsing and Avahi for responding. Both
+own a thread and a socket and hand the caller a stream of events; here
+`poll` answers a step and an instant instead. Avahi treats the class
+field as a class and special-cases the cache-flush bit at each of the
+half-dozen places it matters; here the bit is split off once, in
+`mdnsrec`. Both hide the probe; here `mdnsclaim` is a public state
+machine with a public tiebreak function, because "did this name get
+claimed, and against whom" is the question an operator asks when two
+devices are fighting.
