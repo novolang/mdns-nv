@@ -1,6 +1,6 @@
 [package]
 name        = "mdns-nv"
-version     = "0.0.2"
+version     = "0.0.3"
 description = "Multicast DNS (RFC 6762) and DNS-based service discovery (RFC 6763) over dns-codec-nv: the probe-and-announce state machine that claims a name, conflict resolution, a responder for a service instance, a querier with a cache and known-answer suppression, and the socket half over UDP multicast.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 
@@ -51,4 +51,4 @@ novo        = ">= 0.8.9"
 # `DnsClassOther(32769)`, so `mdnsrec.class_of` and
 # `mdnsrec.cache_flush_of` are the pair that splits the bit off, and
 # nothing in this package compares a class as an integer.
-dns-codec-nv = "^0.0.1"
+dns-codec-nv = "^0.1.0"

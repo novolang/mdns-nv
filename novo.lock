@@ -3,6 +3,6 @@
 [dns-codec-nv]
 source = "registry"
 url = "https://registry.novo-lang.org"
-req = "^0.0.1"
-version = "0.0.1"
-hash = "83288f4262d5bb7d0783dae84b7e09325876bb3d990f8b2af5ecc711f210dc3a"
+req = "^0.1.0"
+version = "0.1.0"
+hash = "4d5f70c206dc7a3aa469c594f78085d0b867266f84710e39c7cf3842745c3f9b"
