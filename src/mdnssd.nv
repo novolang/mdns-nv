@@ -6,7 +6,7 @@
 // `[]` THROUGHOUT.
 //
 // AN INSTANCE NAME IS A HUMAN-READABLE STRING AND NOT A HOSTNAME.
-// "Klaus's Printer (upstairs)" is a legal DNS-SD instance name, apostrophe
+// "Ada's Printer (upstairs)" is a legal DNS-SD instance name, apostrophe
 // and spaces and parentheses and all, because it is one DNS LABEL and a
 // label is 63 bytes of anything.  The commonest mistake is escaping it —
 // a caller that turned the space into `\032` or a dash produces a name

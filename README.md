@@ -38,7 +38,7 @@ probes again.
 
 DNS-based Service Discovery names a running service rather than a
 machine. A **service instance name** is three parts joined:
-`Klaus's Printer._ipp._tcp.local`. The first label is a human-readable
+`Ada's Printer._ipp._tcp.local`. The first label is a human-readable
 instance name, the middle two are the service type and the transport,
 and the last is the domain. Four records describe one instance
 (RFC 6763 section 4): a PTR record listing the instance under its
@@ -93,11 +93,11 @@ use mdnsclaim
 use mdnsfault
 use mdnssd
 
-// The claim on the name `Klaus's Printer._ipp._tcp.local`, with the four
+// The claim on the name `Ada's Printer._ipp._tcp.local`, with the four
 // records that describe the printer behind it.
 fn printer_claim(now_ms: Int) -> Result<MdnsClaim, MdnsFault>
     let service = mdnssd.service("ipp", "tcp")!
-    let instance = mdnssd.instance("Klaus's Printer", service, mdnssd.MDNS_DOMAIN)!
+    let instance = mdnssd.instance("Ada's Printer", service, mdnssd.MDNS_DOMAIN)!
     let target = MdnsTarget { hostname: "printer", port: 631, priority: 0, weight: 0 }
     let records = mdnssd.records_for(instance, target,
                                      [mdnssd.txt_pair("rp", "printers/one")],
@@ -217,7 +217,7 @@ other module and no other package.
     `MdnsDatagram.ip_ttl` is `-1` when the platform did not report it,
     which means unknown and not bad.
 13. **A service instance name is human-readable and is never escaped**
-    (RFC 6763 section 4.1.1). `Klaus's Printer (upstairs)` is one legal
+    (RFC 6763 section 4.1.1). `Ada's Printer (upstairs)` is one legal
     DNS label, apostrophe and spaces and parentheses included. A caller
     that turned the space into `\032` publishes a name with the escape
     in it, in every browser, for as long as the service runs.

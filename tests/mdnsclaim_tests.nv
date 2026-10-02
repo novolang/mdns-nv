@@ -203,12 +203,12 @@ fn test_a_rename_produces_a_name_a_user_recognises() [io]
     match mdnssd.service("ipp", "tcp")
         Err(_) => test.fail("_ipp._tcp is a legal service type")
         Ok(s)  =>
-            match mdnssd.instance("Klaus's Printer", s, "local")
+            match mdnssd.instance("Ada's Printer", s, "local")
                 Err(_) => test.fail("an instance name is one label of anything")
                 Ok(i)  =>
                     test.case("the second attempt is the name with (2) after it")
                     test.assert_eq_str(mdnssd.renamed(i, 2).instance,
-                                       "Klaus's Printer (2)")
+                                       "Ada's Printer (2)")
 
     test.case("and a hostname renames with a hyphen instead")
     test.assert_eq_str(mdnssd.renamed_host("printer", 2), "printer-2")
@@ -223,8 +223,8 @@ fn test_an_instance_name_is_human_readable_and_not_escaped() [io]
         Err(_) => test.fail("_ipp._tcp is a legal service type")
         Ok(s)  =>
             test.case("spaces, apostrophes and parentheses are all legal")
-            match mdnssd.instance("Klaus's Printer (upstairs)", s, "local")
-                Ok(i)  => test.assert_eq_str(i.instance, "Klaus's Printer (upstairs)")
+            match mdnssd.instance("Ada's Printer (upstairs)", s, "local")
+                Ok(i)  => test.assert_eq_str(i.instance, "Ada's Printer (upstairs)")
                 Err(_) => test.fail("an instance name is one label of anything")
 
 @test
